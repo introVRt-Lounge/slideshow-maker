@@ -129,19 +129,19 @@ def create_slideshow_chunked(images, output_file, min_duration=DEFAULT_MIN_DURAT
                     curr_clip = temp_clips[j]
                     transition_file = f"{temp_dir}/transition_{chunk_idx}_{j}.mp4"
 
-                    # CYCLE THROUGH DIFFERENT TRANSITION TYPES for variety!
-                    transition_type = available_transitions[(j-1) % len(available_transitions)]
+                    # RANDOMLY SELECT TRANSITION TYPES for maximum variety!
+                    transition_type = random.choice(available_transitions)
 
                     # Use DRAMATIC transition - 1 second duration so it's UNMISSABLE
                     # ADD TEXT OVERLAY TO SHOW WHICH TRANSITION IS BEING USED!
                     # Try OpenCL transition first, fallback to CPU if it fails
                     if capabilities['gpu_transitions_supported']:
                         # OpenCL transition with RGBA format handling
-                        cmd = f'ffmpeg -y -init_hw_device opencl=ocl:0.0 -filter_hw_device ocl -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v]format=rgba,hwupload=extra_hw_frames=16[0hw];[1:v]format=rgba,hwupload=extra_hw_frames=16[1hw];[0hw][1hw]xfade_opencl=transition={transition_type}:duration={DEFAULT_TRANSITION_DURATION}:offset={duration-DEFAULT_TRANSITION_DURATION:.1f},hwdownload,format=yuv420p[xfaded]; [xfaded]drawtext=text=\'{transition_type.upper()}\':fontsize=72:fontcolor=white:box=1:boxcolor=black@0.7:x=(w-text_w)/2:y=h-text_h-50:enable=\'between(t,{duration-DEFAULT_TRANSITION_DURATION:.1f},{duration:.1f})\'[v]" -map "[v]" -c:v libx264 -r {fps} -crf {DEFAULT_CRF} -preset {DEFAULT_PRESET} -t {duration:.1f} "{transition_file}"'
+                        cmd = f'ffmpeg -y -init_hw_device opencl=ocl:0.0 -filter_hw_device ocl -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v]format=rgba,hwupload=extra_hw_frames=16[0hw];[1:v]format=rgba,hwupload=extra_hw_frames=16[1hw];[0hw][1hw]xfade_opencl=transition={transition_type}:duration={DEFAULT_TRANSITION_DURATION}:offset={duration-DEFAULT_TRANSITION_DURATION:.1f},hwdownload,format=yuv420p" -c:v libx264 -r {fps} -crf {DEFAULT_CRF} -preset {DEFAULT_PRESET} -t {duration:.1f} "{transition_file}"'
                     else:
                         # CPU transition with optimal encoding
                         encoding_params = get_encoding_params(nvenc_available, fps)
-                        cmd = f'ffmpeg -y -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v][1:v]xfade=transition={transition_type}:duration={DEFAULT_TRANSITION_DURATION}:offset={duration-DEFAULT_TRANSITION_DURATION:.1f}[xfaded]; [xfaded]drawtext=text=\'{transition_type.upper()}\':fontsize=72:fontcolor=white:box=1:boxcolor=black@0.7:x=(w-text_w)/2:y=h-text_h-50:enable=\'between(t,{duration-DEFAULT_TRANSITION_DURATION:.1f},{duration:.1f})\'[v]" -map "[v]" {encoding_params} -t {duration:.1f} "{transition_file}"'
+                        cmd = f'ffmpeg -y -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v][1:v]xfade=transition={transition_type}:duration={DEFAULT_TRANSITION_DURATION}:offset={duration-DEFAULT_TRANSITION_DURATION:.1f}" {encoding_params} -t {duration:.1f} "{transition_file}"'
 
                     print(f"      🔄 {transition_type.upper()} transition command: {cmd}")
                     if run_command(cmd, f"    {transition_type.upper()} transition {j}/{len(temp_clips)-1}", show_output=True):
@@ -152,7 +152,7 @@ def create_slideshow_chunked(images, output_file, min_duration=DEFAULT_MIN_DURAT
                         if capabilities['gpu_transitions_supported'] and capabilities['cpu_transitions_supported']:
                             print(f"      ⚠️ OpenCL transition failed, trying CPU fallback...")
                             encoding_params = get_encoding_params(nvenc_available, fps)
-                            cpu_cmd = f'ffmpeg -y -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v][1:v]xfade=transition={transition_type}:duration={DEFAULT_TRANSITION_DURATION}:offset={duration-DEFAULT_TRANSITION_DURATION:.1f}[xfaded]; [xfaded]drawtext=text=\'{transition_type.upper()}\':fontsize=72:fontcolor=white:box=1:boxcolor=black@0.7:x=(w-text_w)/2:y=h-text_h-50:enable=\'between(t,{duration-DEFAULT_TRANSITION_DURATION:.1f},{duration:.1f})\'[v]" -map "[v]" {encoding_params} -t {duration:.1f} "{transition_file}"'
+                            cpu_cmd = f'ffmpeg -y -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v][1:v]xfade=transition={transition_type}:duration={DEFAULT_TRANSITION_DURATION}:offset={duration-DEFAULT_TRANSITION_DURATION:.1f}" {encoding_params} -t {duration:.1f} "{transition_file}"'
                             if run_command(cpu_cmd, f"    CPU fallback {transition_type.upper()} transition {j}/{len(temp_clips)-1}", show_output=True):
                                 transition_clips.append(transition_file)
                                 print(f"      ✅ CPU fallback {transition_type.upper()} transition {j} SUCCESS")

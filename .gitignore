@@ -4,6 +4,20 @@ temp_chunks/
 *.m4a
 audio_merged.m4a
 slideshow_with_audio.mp4
+output.mp4
+
+# FFmpeg binaries and large files
+ffmpeg-*/
+ffmpeg-full/
+ffmpeg-full.7z
+ffmpeg_opencl.bat
+*.exe
+
+# Test files and scripts
+test_opencl_*.py
+test_xfade_opencl.py
+create_opencl_*.py
+OPENCL_SETUP_GUIDE.md
 
 # Python cache
 __pycache__/

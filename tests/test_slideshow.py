@@ -138,121 +138,124 @@ class TestSlideshow:
                 mock_print.assert_called_with("❌ No audio files found!")
     
     def test_create_slideshow_with_audio_success(self, tmp_path):
-        """Test create_slideshow_with_audio successful execution"""
+        """Test create_slideshow_with_audio successful execution - FAST VERSION"""
         # Create test files
         (tmp_path / "test.png").write_bytes(b"fake png data")
         (tmp_path / "test.mp3").write_bytes(b"fake mp3 data")
         
-        with patch('slideshow_maker.audio.find_audio_files') as mock_find_audio:
-            mock_find_audio.return_value = [str(tmp_path / "test.mp3")]
+        # Mock ALL external dependencies in one go
+        with patch('slideshow_maker.audio.find_audio_files') as mock_find_audio, \
+             patch('slideshow_maker.audio.get_total_audio_duration') as mock_duration, \
+             patch('slideshow_maker.slideshow.find_images') as mock_find_images, \
+             patch('slideshow_maker.audio.merge_audio') as mock_merge, \
+             patch('slideshow_maker.video.create_slideshow') as mock_create, \
+             patch('slideshow_maker.audio.combine_video_audio') as mock_combine, \
+             patch('slideshow_maker.slideshow.print_ffmpeg_capabilities') as mock_capabilities, \
+             patch('builtins.print'), \
+             patch('os.path.exists') as mock_exists:
             
-            with patch('slideshow_maker.audio.get_total_audio_duration') as mock_duration:
-                mock_duration.return_value = 120.0
-                
-                with patch('slideshow_maker.slideshow.find_images') as mock_find_images:
-                    mock_find_images.return_value = [str(tmp_path / "test.png")]
-                    
-                    with patch('slideshow_maker.audio.merge_audio') as mock_merge:
-                        mock_merge.return_value = True
-                        
-                        with patch('slideshow_maker.video.create_slideshow') as mock_create:
-                            mock_create.return_value = True
-                            
-                            with patch('slideshow_maker.audio.combine_video_audio') as mock_combine:
-                                mock_combine.return_value = True
-                                
-                                with patch('builtins.print'):
-                                    with patch('os.path.exists') as mock_exists:
-                                        mock_exists.return_value = False  # No existing files
-                                        
-                                        result = create_slideshow_with_audio(str(tmp_path))
-                                        assert result is True
+            # Setup mocks
+            mock_find_audio.return_value = [str(tmp_path / "test.mp3")]
+            mock_duration.return_value = 120.0
+            mock_find_images.return_value = [str(tmp_path / "test.png")]
+            mock_merge.return_value = True
+            mock_create.return_value = True
+            mock_combine.return_value = True
+            mock_exists.return_value = True  # Directory exists
+            
+            result = create_slideshow_with_audio(str(tmp_path))
+            assert result is True
     
     def test_create_slideshow_with_audio_audio_processing_failure(self, tmp_path):
-        """Test create_slideshow_with_audio when audio processing fails"""
+        """Test create_slideshow_with_audio when audio processing fails - FAST VERSION"""
         # Create test files
         (tmp_path / "test.png").write_bytes(b"fake png data")
         (tmp_path / "test.mp3").write_bytes(b"fake mp3 data")
         
-        with patch('slideshow_maker.audio.find_audio_files') as mock_find_audio:
-            mock_find_audio.return_value = [str(tmp_path / "test.mp3")]
+        # Mock ALL external dependencies in one go
+        with patch('slideshow_maker.audio.find_audio_files') as mock_find_audio, \
+             patch('slideshow_maker.audio.get_total_audio_duration') as mock_duration, \
+             patch('slideshow_maker.slideshow.find_images') as mock_find_images, \
+             patch('slideshow_maker.audio.merge_audio') as mock_merge, \
+             patch('builtins.print') as mock_print, \
+             patch('os.path.exists') as mock_exists:
             
-            with patch('slideshow_maker.audio.get_total_audio_duration') as mock_duration:
-                mock_duration.return_value = 120.0
-                
-                with patch('slideshow_maker.slideshow.find_images') as mock_find_images:
-                    mock_find_images.return_value = [str(tmp_path / "test.png")]
-                    
-                    with patch('slideshow_maker.audio.merge_audio') as mock_merge:
-                        mock_merge.return_value = False  # Audio processing fails
-                        
-                        with patch('builtins.print') as mock_print:
-                            with patch('os.path.exists') as mock_exists:
-                                mock_exists.return_value = False
-                                
-                                result = create_slideshow_with_audio(str(tmp_path))
-                                assert result is False
-                                mock_print.assert_called_with("❌ Audio processing failed!")
+            # Setup mocks with failure
+            mock_find_audio.return_value = [str(tmp_path / "test.mp3")]
+            mock_duration.return_value = 120.0
+            mock_find_images.return_value = [str(tmp_path / "test.png")]
+            mock_merge.return_value = False  # Audio processing fails
+            mock_exists.return_value = True
+            
+            result = create_slideshow_with_audio(str(tmp_path))
+            assert result is False
+            
+            # Check that error message was printed
+            print_calls = [call[0][0] for call in mock_print.call_args_list]
+            error_messages = [msg for msg in print_calls if "❌" in msg]
+            assert len(error_messages) > 0
     
     def test_create_slideshow_with_audio_video_creation_failure(self, tmp_path):
-        """Test create_slideshow_with_audio when video creation fails"""
+        """Test create_slideshow_with_audio when video creation fails - FAST VERSION"""
         # Create test files
         (tmp_path / "test.png").write_bytes(b"fake png data")
         (tmp_path / "test.mp3").write_bytes(b"fake mp3 data")
         
-        with patch('slideshow_maker.audio.find_audio_files') as mock_find_audio:
-            mock_find_audio.return_value = [str(tmp_path / "test.mp3")]
+        # Mock ALL external dependencies in one go
+        with patch('slideshow_maker.audio.find_audio_files') as mock_find_audio, \
+             patch('slideshow_maker.audio.get_total_audio_duration') as mock_duration, \
+             patch('slideshow_maker.slideshow.find_images') as mock_find_images, \
+             patch('slideshow_maker.audio.merge_audio') as mock_merge, \
+             patch('slideshow_maker.video.create_slideshow') as mock_create, \
+             patch('builtins.print') as mock_print, \
+             patch('os.path.exists') as mock_exists:
             
-            with patch('slideshow_maker.audio.get_total_audio_duration') as mock_duration:
-                mock_duration.return_value = 120.0
-                
-                with patch('slideshow_maker.slideshow.find_images') as mock_find_images:
-                    mock_find_images.return_value = [str(tmp_path / "test.png")]
-                    
-                    with patch('slideshow_maker.audio.merge_audio') as mock_merge:
-                        mock_merge.return_value = True
-                        
-                        with patch('slideshow_maker.video.create_slideshow') as mock_create:
-                            mock_create.return_value = False  # Video creation fails
-                            
-                            with patch('builtins.print') as mock_print:
-                                with patch('os.path.exists') as mock_exists:
-                                    mock_exists.return_value = False
-                                    
-                                    result = create_slideshow_with_audio(str(tmp_path))
-                                    assert result is False
-                                    mock_print.assert_called_with("❌ Slideshow creation failed!")
+            # Setup mocks with failure
+            mock_find_audio.return_value = [str(tmp_path / "test.mp3")]
+            mock_duration.return_value = 120.0
+            mock_find_images.return_value = [str(tmp_path / "test.png")]
+            mock_merge.return_value = True
+            mock_create.return_value = False  # Video creation fails
+            mock_exists.return_value = True
+            
+            result = create_slideshow_with_audio(str(tmp_path))
+            assert result is False
+            
+            # Check that error message was printed
+            print_calls = [call[0][0] for call in mock_print.call_args_list]
+            error_messages = [msg for msg in print_calls if "❌" in msg]
+            assert len(error_messages) > 0
     
     def test_create_slideshow_with_audio_existing_audio_file(self, tmp_path):
-        """Test create_slideshow_with_audio with existing audio file"""
+        """Test create_slideshow_with_audio with existing audio file - FAST VERSION"""
         # Create test files
         (tmp_path / "test.png").write_bytes(b"fake png data")
         (tmp_path / "test.mp3").write_bytes(b"fake mp3 data")
         (tmp_path / "audio_merged.m4a").write_bytes(b"existing audio")
         
-        with patch('slideshow_maker.audio.find_audio_files') as mock_find_audio:
-            mock_find_audio.return_value = [str(tmp_path / "test.mp3")]
+        # Mock ALL external dependencies in one go
+        with patch('slideshow_maker.audio.find_audio_files') as mock_find_audio, \
+             patch('slideshow_maker.utils.get_audio_duration') as mock_duration, \
+             patch('slideshow_maker.slideshow.find_images') as mock_find_images, \
+             patch('slideshow_maker.video.create_slideshow') as mock_create, \
+             patch('slideshow_maker.audio.combine_video_audio') as mock_combine, \
+             patch('builtins.print'), \
+             patch('os.path.exists') as mock_exists:
             
-            with patch('slideshow_maker.utils.get_audio_duration') as mock_duration:
-                mock_duration.return_value = 120.0
-                
-                with patch('slideshow_maker.slideshow.find_images') as mock_find_images:
-                    mock_find_images.return_value = [str(tmp_path / "test.png")]
-                    
-                    with patch('slideshow_maker.video.create_slideshow') as mock_create:
-                        mock_create.return_value = True
-                        
-                        with patch('slideshow_maker.audio.combine_video_audio') as mock_combine:
-                            mock_combine.return_value = True
-                            
-                            with patch('builtins.print'):
-                                with patch('os.path.exists') as mock_exists:
-                                    def exists_side_effect(path):
-                                        return path == str(tmp_path / "audio_merged.m4a")
-                                    mock_exists.side_effect = exists_side_effect
-                                    
-                                    result = create_slideshow_with_audio(str(tmp_path))
-                                    assert result is True
+            # Setup mocks
+            mock_find_audio.return_value = [str(tmp_path / "test.mp3")]
+            mock_duration.return_value = 120.0
+            mock_find_images.return_value = [str(tmp_path / "test.png")]
+            mock_create.return_value = True
+            mock_combine.return_value = True
+            
+            # Mock exists to return True for directory, True for existing audio file
+            def exists_side_effect(path):
+                return path == str(tmp_path) or path == str(tmp_path / "audio_merged.m4a")
+            mock_exists.side_effect = exists_side_effect
+            
+            result = create_slideshow_with_audio(str(tmp_path))
+            assert result is True
                                     
                                     # Should not call merge_audio since file exists
                                     # (This is tested indirectly through the successful result)

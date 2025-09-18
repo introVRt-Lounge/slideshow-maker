@@ -13,7 +13,7 @@ from .config import (
 )
 from .audio import find_audio_files, merge_audio, combine_video_audio, get_total_audio_duration
 from .video import create_slideshow
-from .utils import show_progress, print_ffmpeg_capabilities
+from .utils import show_progress, print_ffmpeg_capabilities, detect_nvenc_support
 
 
 def find_images(directory):
@@ -41,11 +41,9 @@ def calculate_slides_needed(audio_duration, min_duration, max_duration, test_mod
         print(f"🎵 Audio duration: {audio_duration:.1f} seconds")
         print(f"⏱️  Slides needed: {slides_needed} (avg {avg_duration:.1f}s per slide)")
 
-        # Safety check - don't create ridiculously long videos
-        if slides_needed > MAX_SLIDES_LIMIT:
-            slides_needed = MAX_SLIDES_LIMIT
-            print(f"⚠️  Limiting to {slides_needed} slides for practical processing time")
-            print(f"   Final video will be ~{slides_needed * avg_duration / 60:.1f} minutes")
+        # No limits - process all slides for full duration!
+        print(f"🚀 Processing ALL {slides_needed} slides for maximum content!")
+        print(f"   Final video will be ~{slides_needed * avg_duration / 60:.1f} minutes")
 
         return slides_needed
 
@@ -72,13 +70,14 @@ def select_images(all_images, slides_needed, test_mode=False):
 
                 # Show progress for the repeats
                 if i % 100 == 0 or i == remaining - 1:
-                    show_progress(len(all_images) + i + 1, slides_needed, img)
+                    current_total = len(all_images) + i + 1
+                    show_progress(current_total, slides_needed, img)
 
         print(f"🎲 Selected {len(images)} images ({len(all_images)} unique + {remaining} repeats)")
         return images
 
 
-def create_slideshow_with_audio(image_dir, test_mode=False, min_duration=DEFAULT_MIN_DURATION, 
+def create_slideshow_with_audio(image_dir, test_mode=False, dry_run=False, min_duration=DEFAULT_MIN_DURATION, 
                                max_duration=DEFAULT_MAX_DURATION):
     """Main function to create a complete slideshow with audio"""
     
@@ -124,6 +123,26 @@ def create_slideshow_with_audio(image_dir, test_mode=False, min_duration=DEFAULT
     # Select images based on mode
     images = select_images(all_images, slides_needed, test_mode)
     print(f"🖼️  Final image count: {len(images)}")
+
+    # Dry run mode - show what would be done without processing
+    if dry_run:
+        print("\n🔍 DRY RUN MODE - No processing will be performed")
+        print("="*60)
+        print(f"📊 SUMMARY:")
+        print(f"  🎵 Audio files: {len(audio_files)}")
+        for i, audio_file in enumerate(audio_files, 1):
+            print(f"    {i}. {os.path.basename(audio_file)}")
+        print(f"  🖼️  Images: {len(all_images)} unique")
+        print(f"  🎬 Total slides: {len(images)}")
+        print(f"  ⏱️  Estimated duration: {len(images) * (min_duration + max_duration) / 2 / 60:.1f} minutes")
+        from .utils import get_available_transitions
+        available_transitions, _ = get_available_transitions()
+        print(f"  🎭 Transitions: All {len(available_transitions)} types will be used randomly")
+        print(f"  🚀 Encoding: {'NVENC (GPU)' if detect_nvenc_support() else 'CPU'}")
+        print(f"  📁 Output: {FINAL_OUTPUT}")
+        print("="*60)
+        print("✅ Dry run complete - use without --dry-run to process")
+        return True
 
     # Process audio
     if not os.path.exists(AUDIO_OUTPUT):

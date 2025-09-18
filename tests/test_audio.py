@@ -62,7 +62,7 @@ class TestAudio:
         test_audio.write_bytes(b"fake mp3 data")
         output_file = tmp_path / "output.m4a"
         
-        with patch('slideshow_maker.utils.run_command') as mock_run:
+        with patch('slideshow_maker.audio.run_command') as mock_run:
             mock_run.return_value = True
             
             result = merge_audio([str(test_audio)], str(output_file))
@@ -82,7 +82,7 @@ class TestAudio:
         test_audio2.write_bytes(b"fake mp3 data")
         output_file = tmp_path / "output.m4a"
         
-        with patch('slideshow_maker.utils.run_command') as mock_run:
+        with patch('slideshow_maker.audio.run_command') as mock_run:
             mock_run.return_value = True
             
             result = merge_audio([str(test_audio1), str(test_audio2)], str(output_file))
@@ -96,7 +96,7 @@ class TestAudio:
         test_audio.write_bytes(b"fake mp3 data")
         output_file = tmp_path / "output.m4a"
         
-        with patch('slideshow_maker.utils.run_command') as mock_run:
+        with patch('slideshow_maker.audio.run_command') as mock_run:
             mock_run.return_value = False
             
             result = merge_audio([str(test_audio)], str(output_file))
@@ -111,10 +111,10 @@ class TestAudio:
         video_file.write_bytes(b"fake video data")
         audio_file.write_bytes(b"fake audio data")
         
-        with patch('slideshow_maker.utils.get_audio_duration') as mock_duration:
+        with patch('slideshow_maker.audio.get_audio_duration') as mock_duration:
             mock_duration.return_value = 120.5
             
-            with patch('slideshow_maker.utils.run_command') as mock_run:
+            with patch('slideshow_maker.audio.run_command') as mock_run:
                 mock_run.return_value = True
                 
                 result = combine_video_audio(str(video_file), str(audio_file), str(output_file))
@@ -134,7 +134,7 @@ class TestAudio:
         video_file.write_bytes(b"fake video data")
         audio_file.write_bytes(b"fake audio data")
         
-        with patch('slideshow_maker.utils.get_audio_duration') as mock_duration:
+        with patch('slideshow_maker.audio.get_audio_duration') as mock_duration:
             mock_duration.return_value = 0.0
             
             with patch('builtins.print') as mock_print:
@@ -149,7 +149,7 @@ class TestAudio:
         audio1.write_bytes(b"fake audio data")
         audio2.write_bytes(b"fake audio data")
         
-        with patch('slideshow_maker.utils.get_audio_duration') as mock_duration:
+        with patch('slideshow_maker.audio.get_audio_duration') as mock_duration:
             mock_duration.side_effect = [60.0, 30.5]  # Different durations for each file
             
             total_duration = get_total_audio_duration([str(audio1), str(audio2)])
@@ -169,7 +169,7 @@ class TestAudio:
         test_audio2.write_bytes(b"fake mp3 data")
         output_file = tmp_path / "output.m4a"
         
-        with patch('slideshow_maker.utils.run_command') as mock_run:
+        with patch('slideshow_maker.audio.run_command') as mock_run:
             mock_run.return_value = True
             
             result = merge_audio([str(test_audio1), str(test_audio2)], str(output_file))
@@ -185,7 +185,7 @@ class TestAudio:
         test_audio.write_bytes(b"fake mp3 data")
         output_file = tmp_path / "output.m4a"
         
-        with patch('slideshow_maker.utils.run_command') as mock_run:
+        with patch('slideshow_maker.audio.run_command') as mock_run:
             mock_run.return_value = True
             
             result = merge_audio([str(test_audio)], str(output_file))

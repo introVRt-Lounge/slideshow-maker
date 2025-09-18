@@ -10,11 +10,19 @@ from .utils import run_command, get_audio_duration
 
 
 def find_audio_files(directory):
-    """Find audio files in the directory"""
+    """Find audio files in the directory, prioritizing Avicii files"""
     audio_files = []
     for ext in AUDIO_EXTENSIONS:
         audio_files.extend(glob.glob(os.path.join(directory, ext)))
-    return sorted(audio_files)[:2]  # Return up to 2 files
+    
+    # Sort to prioritize Avicii files first
+    audio_files = sorted(audio_files)
+    avicii_files = [f for f in audio_files if 'avicii' in f.lower()]
+    other_files = [f for f in audio_files if 'avicii' not in f.lower()]
+    
+    # Return Avicii files first, then others, up to 2 files total
+    prioritized_files = avicii_files + other_files
+    return prioritized_files[:2]
 
 
 def merge_audio(audio_files, output_file):
