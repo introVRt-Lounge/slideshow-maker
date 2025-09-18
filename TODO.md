@@ -3,6 +3,9 @@
 ## 📋 Overview
 This document outlines the remaining features and enhancements for the VRChat Slideshow Maker project. The core functionality is complete with 50+ FFmpeg transitions and capability detection.
 
+## 🎯 **NEW: Beat-Aligned Slideshow System**
+A critical new feature has been identified: **Beat-Aligned Slideshow System**. This feature will automatically detect musical beats and sync image transitions to create professional music video-style slideshows. This is now the **highest priority** feature as it provides the most significant user value and differentiates the tool from basic slideshow creators.
+
 ## ✅ Completed Features
 - [x] Research all available FFmpeg xfade transitions and effects
 - [x] Add ALL 50+ FFmpeg xfade transitions from the official gallery
@@ -14,7 +17,87 @@ This document outlines the remaining features and enhancements for the VRChat Sl
 
 ## 🚀 High Priority Features
 
-### 1. Add Advanced Transition Categories (3D, Particle, Morphing, etc.)
+### 1. Beat-Aligned Slideshow System (NEW - Critical Feature)
+**Priority:** Critical | **Effort:** High | **Impact:** Very High
+
+#### Overview:
+Implement intelligent beat detection and alignment system that automatically syncs image transitions to musical beats, creating professional music video-style slideshows.
+
+#### Tasks:
+- [ ] **Beat Detection System**
+  - [ ] Primary: `aubio` beat detection (`aubio beat input.mp3 > beats.txt`)
+  - [ ] Fallback: `librosa` beat tracking with onset strength analysis
+  - [ ] Downbeat detection using `librosa.beat.plp` and `madmom`
+  - [ ] BPM estimation and tempo change detection
+  - [ ] Beat validation and cleanup (remove duplicates, too-close beats)
+
+- [ ] **Window-Constrained Selection Algorithm**
+  - [ ] Implement core selection algorithm with `[PERIOD_MIN, PERIOD_MAX]` windows
+  - [ ] Add selection strategies: `nearest`, `energy`, `downbeat`, `hybrid`
+  - [ ] Implement strict vs non-strict modes with grace period expansion
+  - [ ] Add phase shift and latency compensation
+  - [ ] Ensure all cuts land exactly on detected beats
+
+- [ ] **Beat-Aligned CLI Interface**
+  - [ ] `beatslides` command with comprehensive parameter set
+  - [ ] `--period MIN MAX` for window constraints
+  - [ ] `--target` for desired average period
+  - [ ] `--selection-strategy` for beat selection method
+  - [ ] `--strict` and `--grace` for error handling
+  - [ ] `--phase` and `--latency` for timing compensation
+
+- [ ] **Integration with Existing Transition System**
+  - [ ] Use existing 50+ FFmpeg transitions for beat-aligned cuts
+  - [ ] Integrate with capability detection system
+  - [ ] Support all transition types (CPU and GPU)
+  - [ ] Add transition timing validation for beat constraints
+
+- [ ] **Advanced Beat Analysis**
+  - [ ] Onset strength scoring for energy-based selection
+  - [ ] Downbeat estimation and preference
+  - [ ] Tempo change adaptation
+  - [ ] Beat confidence scoring
+
+- [ ] **Robust Error Handling**
+  - [ ] Graceful fallback when no beats detected
+  - [ ] Clear error messages for strict mode failures
+  - [ ] Warning system for non-strict mode deviations
+  - [ ] Beat detection quality validation
+
+#### Files to create:
+- `src/slideshow_maker/beat_detection.py` - Beat detection and analysis
+- `src/slideshow_maker/beat_selection.py` - Window-constrained selection algorithm
+- `src/slideshow_maker/beat_alignment.py` - Main beat alignment orchestrator
+- `src/slideshow_maker/cli/beatslides.py` - Beat-aligned CLI interface
+- `tests/test_beat_detection.py` - Beat detection tests
+- `tests/test_beat_selection.py` - Selection algorithm tests
+- `tests/test_beat_alignment.py` - Integration tests
+
+#### Files to modify:
+- `main.py` - Add beatslides command
+- `src/slideshow_maker/video.py` - Integrate beat-aligned rendering
+- `src/slideshow_maker/transitions.py` - Add beat-aligned transition support
+- `requirements.txt` - Add aubio, librosa, madmom dependencies
+
+#### Dependencies:
+- `aubio` - Primary beat detection
+- `librosa` - Fallback beat detection and analysis
+- `madmom` - Advanced downbeat detection
+- `numpy` - Numerical analysis
+- `soundfile` - Audio file handling
+
+#### Acceptance Criteria:
+- [ ] All cuts land exactly on detected beats
+- [ ] Inter-cut intervals respect `[PERIOD_MIN, PERIOD_MAX]` windows
+- [ ] Selection adapts to tempo changes automatically
+- [ ] Supports all existing transition types
+- [ ] Graceful error handling with clear messages
+- [ ] Deterministic output with seed control
+- [ ] Comprehensive test coverage
+
+---
+
+### 2. Add Advanced Transition Categories (3D, Particle, Morphing, etc.)
 **Priority:** High | **Effort:** Medium | **Impact:** High
 
 #### Tasks:
@@ -325,22 +408,24 @@ This document outlines the remaining features and enhancements for the VRChat Sl
 
 | Feature | Priority | Effort | Impact | Dependencies |
 |---------|----------|--------|--------|--------------|
+| **Beat-Aligned System** | **Critical** | **High** | **Very High** | **None** |
 | Advanced Categories | High | Medium | High | None |
 | Custom Transitions | High | High | High | Advanced Categories |
-| Timing Controls | High | Medium | High | None |
-| Preview System | Medium | Medium | Medium | None |
-| Audio-Reactive | Medium | High | High | Audio Analysis |
-| Smart Selection | Medium | Medium | Medium | None |
+| Timing Controls | High | Medium | High | Beat-Aligned System |
+| Preview System | Medium | Medium | Medium | Beat-Aligned System |
+| Audio-Reactive | Medium | High | High | Beat-Aligned System |
+| Smart Selection | Medium | Medium | Medium | Beat-Aligned System |
 | Config Files | Low | Low | Medium | None |
 | Testing System | Low | Medium | Low | All Features |
 
 ## 🎯 Next Steps
 
-1. **Start with Advanced Categories** - Builds foundation for other features
-2. **Add Timing Controls** - Enhances existing transitions
-3. **Implement Custom Transitions** - Adds unique value
-4. **Create Preview System** - Improves user experience
-5. **Add Audio-Reactive Features** - Differentiates from competitors
+1. **Implement Beat-Aligned System** - **CRITICAL** - Provides maximum user value and differentiation
+2. **Add Advanced Categories** - Builds foundation for other features
+3. **Add Timing Controls** - Enhances existing transitions and beat alignment
+4. **Create Preview System** - Improves user experience, especially for beat alignment
+5. **Implement Custom Transitions** - Adds unique value
+6. **Add Audio-Reactive Features** - Complements beat alignment system
 
 ## 📝 Notes
 
@@ -350,8 +435,41 @@ This document outlines the remaining features and enhancements for the VRChat Sl
 - Performance impact should be considered for each feature
 - User experience should be prioritized in all implementations
 
+## 🔍 Beat-Alignment Feature Critique
+
+### ✅ **Strengths of beat-alignment.md:**
+- **Comprehensive CLI design** - Well-thought-out parameter set with clear explanations
+- **Robust beat detection** - Primary (aubio) + fallback (librosa) approach ensures reliability
+- **Sophisticated selection algorithm** - Multiple strategies with mathematical precision
+- **Clear invariants** - Window constraints and beat alignment requirements are well-defined
+- **Good error handling** - Strict vs non-strict modes with grace periods
+- **Detailed acceptance tests** - Clear validation criteria for testing
+
+### ⚠️ **Areas for Improvement:**
+- **Missing integration** - Doesn't leverage existing 50+ transition system
+- **Complex CLI** - 15+ parameters might overwhelm users (need simplified presets)
+- **No preview system** - Can't test beat alignment before rendering
+- **Limited transition support** - Only basic xfade, not the full transition library
+- **No configuration files** - All parameters via CLI only (need JSON/YAML support)
+- **Missing audio analysis** - No BPM estimation or tempo change detection in output
+
+### 🚀 **Integration Enhancements:**
+- **Leverage existing capability detection** - Use our FFmpeg detection system
+- **Integrate with transition system** - Use all 50+ transitions for beat-aligned cuts
+- **Add to preview system** - Beat-aligned preview generation
+- **Configuration file support** - JSON/YAML for complex beat alignment setups
+- **Smart selection enhancement** - Combine with our AI selection system
+- **Simplified presets** - Common beat alignment patterns (e.g., "dance", "ambient", "rock")
+
+### 🎯 **Implementation Strategy:**
+1. **Phase 1:** Core beat detection and selection algorithm
+2. **Phase 2:** Integration with existing transition system
+3. **Phase 3:** CLI interface and error handling
+4. **Phase 4:** Preview system and configuration files
+5. **Phase 5:** Advanced features and optimization
+
 ---
 
 *Last updated: $(date)*
-*Total remaining features: 8*
-*Estimated total effort: 6-8 weeks*
+*Total remaining features: 9 (including Beat-Aligned System)*
+*Estimated total effort: 8-10 weeks*
