@@ -1,0 +1,7 @@
+# VRChat Slideshow Maker Requirements
+# This project requires external dependencies:
+# - FFmpeg (with xfade filter support)
+# - ImageMagick (for image metadata)
+
+# Python dependencies (none required currently)
+# Add any Python packages here if needed in the future
