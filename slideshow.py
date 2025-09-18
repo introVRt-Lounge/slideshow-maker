@@ -105,27 +105,101 @@ def create_slideshow_chunked(images, output_file, min_duration=3, max_duration=5
     temp_dir = "temp_chunks"
     os.makedirs(temp_dir, exist_ok=True)
 
-    # VARIETY OF TRANSITIONS - cycle through different types
+    # COMPLETE FFMPEG XFADE TRANSITIONS - ALL 50+ AVAILABLE TYPES!
+    # Based on https://trac.ffmpeg.org/wiki/Xfade
     transitions = [
-        'fade',        # Simple fade
-        'wipeleft',    # Wipe from left
-        'wiperight',   # Wipe from right
-        'wipeup',      # Wipe from bottom
-        'wipedown',    # Wipe from top
-        'smoothleft',  # Smooth wipe left
-        'smoothright', # Smooth wipe right
-        'circlecrop',  # Circular crop
-        'rectcrop',    # Rectangular crop
-        'distance',    # Distance effect
-        'fadeblack',   # Fade through black
-        'fadewhite',   # Fade through white
-        'radial',      # Radial transition
+        # Basic fades
+        'fade',         # Simple crossfade (default)
+        'fadeblack',    # Fade through black
+        'fadewhite',    # Fade through white
+        'fadegrays',    # Fade through grayscale
+        
+        # Wipe effects
+        'wipeleft',     # Wipe from left to right
+        'wiperight',    # Wipe from right to left
+        'wipeup',       # Wipe from bottom to top
+        'wipedown',     # Wipe from top to bottom
+        'wipetl',       # Wipe from top-left
+        'wipetr',       # Wipe from top-right
+        'wipebl',       # Wipe from bottom-left
+        'wipebr',       # Wipe from bottom-right
+        
+        # Slide effects
+        'slideleft',    # Slide from left
+        'slideright',   # Slide from right
+        'slideup',      # Slide from bottom
+        'slidedown',    # Slide from top
+        
+        # Smooth effects
+        'smoothleft',   # Smooth wipe from left
+        'smoothright',  # Smooth wipe from right
+        'smoothup',     # Smooth wipe from bottom
+        'smoothdown',   # Smooth wipe from top
+        
+        # Circle effects
+        'circlecrop',   # Circular crop transition
+        'circleclose',  # Circle closing
+        'circleopen',   # Circle opening
+        
+        # Rectangle effects
+        'rectcrop',     # Rectangular crop transition
+        
+        # Horizontal/Vertical effects
+        'horzclose',    # Horizontal close
+        'horzopen',     # Horizontal open
+        'vertclose',    # Vertical close
+        'vertopen',     # Vertical open
+        
+        # Diagonal effects
+        'diagbl',       # Diagonal bottom-left
+        'diagbr',       # Diagonal bottom-right
+        'diagtl',       # Diagonal top-left
+        'diagtr',       # Diagonal top-right
+        
+        # Slice effects
+        'hlslice',      # Horizontal left slice
+        'hrslice',      # Horizontal right slice
+        'vuslice',      # Vertical up slice
+        'vdslice',      # Vertical down slice
+        
+        # Special effects
+        'dissolve',     # Dissolve effect
+        'pixelize',     # Pixelize effect
+        'radial',       # Radial transition
+        'hblur',        # Horizontal blur
+        'distance',     # Distance effect
+        
+        # Squeeze effects
+        'squeezev',     # Vertical squeeze
+        'squeezeh',     # Horizontal squeeze
+        
+        # Zoom effects
+        'zoomin',       # Zoom in transition
+        
+        # Wind effects
+        'hlwind',       # Horizontal left wind
+        'hrwind',       # Horizontal right wind
+        'vuwind',       # Vertical up wind
+        'vdwind',       # Vertical down wind
+        
+        # Cover effects
+        'coverleft',    # Cover from left
+        'coverright',   # Cover from right
+        'coverup',      # Cover from bottom
+        'coverdown',    # Cover from top
+        
+        # Reveal effects
+        'revealleft',   # Reveal from left
+        'revealright',  # Reveal from right
+        'revealup',     # Reveal from bottom
+        'revealdown',   # Reveal from top
     ]
 
     chunk_files = []
 
     print(f"📦 Processing {len(images)} images in chunks of {chunk_size}")
-    print(f"🎭 Using {len(transitions)} different transition types for variety!")
+    print(f"🎭 Using ALL {len(transitions)} FFmpeg xfade transition types for MAXIMUM variety!")
+    print(f"✨ Transitions include: fades, wipes, slides, circles, diagonals, slices, wind effects, and more!")
 
     # Process images in very small chunks
     for chunk_idx, chunk_start in enumerate(range(0, len(images), chunk_size)):
