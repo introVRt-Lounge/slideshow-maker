@@ -48,30 +48,55 @@ sudo apt-get install ffmpeg imagemagick
 
 ## Usage
 
-### Basic Usage
+### Basic Usage (New Modular Structure)
 
 ```bash
-python3 slideshow.py [image_directory]
+python3 main.py [image_directory]
 ```
 
 ### Command Line Options
 
 - `--test`: Create a 1-minute test video instead of full duration
-- `--min-duration SECONDS`: Minimum duration for each image (default: 4)
+- `--min-duration SECONDS`: Minimum duration for each image (default: 3)
 - `--max-duration SECONDS`: Maximum duration for each image (default: 5)
 
 ### Examples
 
 ```bash
 # Create full slideshow from images in current directory
-python3 slideshow.py
+python3 main.py
 
 # Create test slideshow (1 minute) from specific directory
-python3 slideshow.py --test /path/to/images
+python3 main.py --test /path/to/images
 
 # Create slideshow with custom durations
-python3 slideshow.py --min-duration 3 --max-duration 6 /path/to/images
+python3 main.py --min-duration 3 --max-duration 6 /path/to/images
 ```
+
+### Using as a Python Package
+
+```python
+from slideshow_maker import create_slideshow_with_audio
+
+# Create slideshow programmatically
+success = create_slideshow_with_audio(
+    image_dir="/path/to/images",
+    test_mode=False,
+    min_duration=3,
+    max_duration=5
+)
+```
+
+### Backward Compatibility
+
+The old `slideshow.py` file is still available for backward compatibility:
+
+```bash
+# This still works
+python3 slideshow.py /path/to/images
+```
+
+See [MIGRATION.md](MIGRATION.md) for detailed migration information.
 
 ## How It Works
 
@@ -178,8 +203,28 @@ The script cycles through ALL 50+ FFmpeg xfade transition effects! Here's the co
 - `slideshow_with_audio.mp4` - Final video with slideshow and audio
 - `audio_merged.m4a` - Merged audio file (reused on subsequent runs)
 
-## File Structure
+## Project Structure
 
+### Modular Package Structure
+```
+slideshow-maker/
+├── src/
+│   └── slideshow_maker/          # Main package
+│       ├── __init__.py           # Package initialization
+│       ├── config.py             # Configuration and constants
+│       ├── transitions.py        # Transition management (50+ effects)
+│       ├── audio.py              # Audio processing
+│       ├── video.py              # Video processing
+│       ├── utils.py              # Utility functions
+│       └── slideshow.py          # Main orchestrator
+├── main.py                       # New entry point
+├── setup.py                      # Package setup
+├── slideshow.py                  # Legacy entry point (backward compatibility)
+├── test_modular.py               # Test script
+└── MIGRATION.md                  # Migration guide
+```
+
+### Input File Structure
 ```
 /path/to/images/
 ├── image1.png
