@@ -4,4 +4,13 @@
 # - ImageMagick (for image metadata)
 
 # Python dependencies (none required currently)
-# Add any Python packages here if needed in the future
+# The package is designed to work with just Python standard library
+# and external FFmpeg/ImageMagick tools
+
+# Development dependencies (optional)
+# Install with: pip install -e .[dev]
+# pytest>=6.0
+# pytest-cov>=2.0
+# black>=21.0
+# flake8>=3.8
+# mypy>=0.800
