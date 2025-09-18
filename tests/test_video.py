@@ -32,7 +32,7 @@ class TestVideo:
         test_image.write_bytes(b"fake png data")
         output_file = tmp_path / "output.mp4"
         
-        with patch('slideshow_maker.utils.run_command') as mock_run:
+        with patch('slideshow_maker.video.run_command') as mock_run:
             mock_run.return_value = True
             
             result = create_slideshow([str(test_image)], str(output_file))
@@ -75,8 +75,15 @@ class TestVideo:
         test_image.write_bytes(b"fake png data")
         output_file = tmp_path / "output.mp4"
         
-        with patch('slideshow_maker.utils.run_command') as mock_run:
+        with patch('slideshow_maker.video.run_command') as mock_run, \
+             patch('slideshow_maker.utils.get_available_transitions') as mock_get_transitions, \
+             patch('os.makedirs'), \
+             patch('os.path.exists') as mock_exists, \
+             patch('os.rename'), \
+             patch('shutil.rmtree'):
             mock_run.return_value = True
+            mock_get_transitions.return_value = (['fade', 'wipeleft'], {'cpu_transitions_supported': True})
+            mock_exists.return_value = True  # Make temp files appear to exist
             
             result = create_slideshow_chunked([str(test_image)], str(output_file))
             assert result is True
@@ -91,14 +98,23 @@ class TestVideo:
         
         output_file = tmp_path / "output.mp4"
         
-        with patch('slideshow_maker.utils.run_command') as mock_run:
+        with patch('slideshow_maker.video.run_command') as mock_run, \
+             patch('slideshow_maker.utils.get_available_transitions') as mock_get_transitions:
             mock_run.return_value = True
+            mock_get_transitions.return_value = (['fade', 'wipeleft'], {'cpu_transitions_supported': True})
             
-            with patch('os.makedirs'):
-                with patch('os.rename'):
-                    with patch('shutil.rmtree'):
-                        result = create_slideshow_chunked(test_images, str(output_file))
-                        assert result is True
+            with patch('os.makedirs'), \
+                 patch('os.path.exists') as mock_exists, \
+                 patch('os.rename'), \
+                 patch('os.remove'), \
+                 patch('shutil.rmtree'), \
+                 patch('builtins.open', create=True) as mock_open:
+                mock_exists.return_value = True  # Make temp files appear to exist
+                mock_file = MagicMock()
+                mock_open.return_value.__enter__.return_value = mock_file
+                
+                result = create_slideshow_chunked(test_images, str(output_file))
+                assert result is True
     
     def test_create_slideshow_chunked_command_failure(self, tmp_path):
         """Test create_slideshow_chunked when command fails"""
@@ -106,8 +122,10 @@ class TestVideo:
         test_image.write_bytes(b"fake png data")
         output_file = tmp_path / "output.mp4"
         
-        with patch('slideshow_maker.utils.run_command') as mock_run:
+        with patch('slideshow_maker.video.run_command') as mock_run, \
+             patch('slideshow_maker.utils.get_available_transitions') as mock_get_transitions:
             mock_run.return_value = False
+            mock_get_transitions.return_value = (['fade', 'wipeleft'], {'cpu_transitions_supported': True})
             
             result = create_slideshow_chunked([str(test_image)], str(output_file))
             assert result is False
@@ -122,8 +140,10 @@ class TestVideo:
         
         output_file = tmp_path / "output.mp4"
         
-        with patch('slideshow_maker.utils.run_command') as mock_run:
+        with patch('slideshow_maker.video.run_command') as mock_run, \
+             patch('slideshow_maker.utils.get_available_transitions') as mock_get_transitions:
             mock_run.return_value = True
+            mock_get_transitions.return_value = (['fade', 'wipeleft'], {'cpu_transitions_supported': True})
             
             with patch('os.makedirs'):
                 with patch('os.rename'):
@@ -146,7 +166,7 @@ class TestVideo:
         
         output_file = tmp_path / "output.mp4"
         
-        with patch('slideshow_maker.utils.run_command') as mock_run:
+        with patch('slideshow_maker.video.run_command') as mock_run:
             mock_run.return_value = True
             
             with patch('os.makedirs'):
@@ -169,7 +189,7 @@ class TestVideo:
         
         output_file = tmp_path / "output.mp4"
         
-        with patch('slideshow_maker.utils.run_command') as mock_run:
+        with patch('slideshow_maker.video.run_command') as mock_run:
             mock_run.return_value = True
             
             with patch('os.makedirs'):
@@ -190,7 +210,7 @@ class TestVideo:
         test_image.write_bytes(b"fake png data")
         output_file = tmp_path / "output.mp4"
         
-        with patch('slideshow_maker.utils.run_command') as mock_run:
+        with patch('slideshow_maker.video.run_command') as mock_run:
             mock_run.return_value = True
             
             with patch('os.makedirs'):
@@ -210,7 +230,7 @@ class TestVideo:
         
         output_file = tmp_path / "output.mp4"
         
-        with patch('slideshow_maker.utils.run_command') as mock_run:
+        with patch('slideshow_maker.video.run_command') as mock_run:
             mock_run.return_value = True
             
             with patch('os.makedirs'):

@@ -81,6 +81,35 @@ def get_audio_duration(audio_file):
     return 0.0
 
 
+def get_ffmpeg_path():
+    """Get the path to FFmpeg executable"""
+    # Try to find FFmpeg in common locations
+    common_paths = [
+        'ffmpeg',  # In PATH
+        'ffmpeg.exe',  # Windows
+        '/usr/bin/ffmpeg',  # Linux
+        '/usr/local/bin/ffmpeg',  # macOS
+        'C:\\ffmpeg\\bin\\ffmpeg.exe',  # Windows common
+    ]
+    
+    for path in common_paths:
+        try:
+            if path in ['ffmpeg', 'ffmpeg.exe']:
+                # Check if it's in PATH
+                result = subprocess.run([path, '-version'], capture_output=True, text=True)
+                if result.returncode == 0:
+                    return path
+            else:
+                # Check if file exists
+                if os.path.exists(path):
+                    return path
+        except:
+            continue
+    
+    # Fallback to 'ffmpeg' if nothing else works
+    return 'ffmpeg'
+
+
 def detect_ffmpeg_capabilities():
     """Detect FFmpeg capabilities for transitions"""
     capabilities = {
@@ -91,9 +120,11 @@ def detect_ffmpeg_capabilities():
         'cpu_transitions_supported': False
     }
     
+    ffmpeg_path = get_ffmpeg_path()
+    
     try:
         # Check if xfade filter is available
-        cmd = 'ffmpeg -f lavfi -i "color=red:size=320x240:duration=1" -f lavfi -i "color=blue:size=320x240:duration=1" -filter_complex "[0][1]xfade=transition=fade:duration=0.5:offset=0.5" -t 1 -f null - 2>&1'
+        cmd = f'"{ffmpeg_path}" -f lavfi -i "color=red:size=320x240:duration=1" -f lavfi -i "color=blue:size=320x240:duration=1" -filter_complex "[0][1]xfade=transition=fade:duration=0.5:offset=0.5" -t 1 -f null - 2>&1'
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if result.returncode == 0:
             capabilities['xfade_available'] = True
@@ -102,8 +133,8 @@ def detect_ffmpeg_capabilities():
         pass
     
     try:
-        # Check if xfade_opencl is available
-        cmd = 'ffmpeg -f lavfi -i "color=red:size=320x240:duration=1" -f lavfi -i "color=blue:size=320x240:duration=1" -filter_complex "[0][1]xfade_opencl=transition=fade:duration=0.5:offset=0.5" -t 1 -f null - 2>&1'
+        # Check if xfade_opencl is available with proper RGBA format handling
+        cmd = f'"{ffmpeg_path}" -init_hw_device opencl=ocl:0.0 -filter_hw_device ocl -f lavfi -i "color=red:size=320x240:duration=1" -f lavfi -i "color=blue:size=320x240:duration=1" -filter_complex "[0:v]format=rgba,hwupload=extra_hw_frames=16[0hw];[1:v]format=rgba,hwupload=extra_hw_frames=16[1hw];[0hw][1hw]xfade_opencl=transition=fade:duration=0.5:offset=0.5,hwdownload,format=yuv420p" -t 1 -f null - 2>&1'
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if result.returncode == 0:
             capabilities['xfade_opencl_available'] = True
@@ -113,7 +144,7 @@ def detect_ffmpeg_capabilities():
     
     try:
         # Check if OpenCL is available
-        cmd = 'ffmpeg -f lavfi -i "color=red:size=320x240:duration=1" -vf "scale_opencl=640:480" -t 1 -f null - 2>&1'
+        cmd = f'"{ffmpeg_path}" -f lavfi -i "color=red:size=320x240:duration=1" -vf "scale_opencl=w=640:h=480" -t 1 -f null - 2>&1'
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if result.returncode == 0:
             capabilities['opencl_available'] = True
@@ -139,16 +170,34 @@ def get_available_transitions():
     return available_transitions, capabilities
 
 
+def detect_nvenc_support():
+    """Detect if NVENC hardware encoding is available"""
+    ffmpeg_path = get_ffmpeg_path()
+    
+    try:
+        # Check if h264_nvenc encoder is available
+        cmd = f'"{ffmpeg_path}" -hide_banner -encoders 2>&1'
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if result.returncode == 0 and 'h264_nvenc' in result.stdout:
+            return True
+    except:
+        pass
+    
+    return False
+
+
 def print_ffmpeg_capabilities():
     """Print FFmpeg capabilities information"""
     from .config import CPU_TRANSITIONS, GPU_TRANSITIONS
     
     capabilities = detect_ffmpeg_capabilities()
+    nvenc_available = detect_nvenc_support()
     
     print("🔍 FFmpeg Capability Detection:")
     print(f"  📊 xfade filter (CPU): {'✅ Available' if capabilities['xfade_available'] else '❌ Not available'}")
     print(f"  🚀 xfade_opencl (GPU): {'✅ Available' if capabilities['xfade_opencl_available'] else '❌ Not available'}")
     print(f"  🎮 OpenCL support: {'✅ Available' if capabilities['opencl_available'] else '❌ Not available'}")
+    print(f"  🚀 NVENC encoding: {'✅ Available' if nvenc_available else '❌ Not available'}")
     
     if capabilities['cpu_transitions_supported']:
         print(f"  💻 CPU transitions: ✅ {len(CPU_TRANSITIONS)} available")
@@ -162,6 +211,11 @@ def print_ffmpeg_capabilities():
     
     total_available = len(get_available_transitions()[0])
     print(f"  🎬 Total transitions: {total_available}")
+    
+    if nvenc_available:
+        print("  🚀 GPU encoding available - faster video processing!")
+    else:
+        print("  💻 Using CPU encoding")
     
     if not capabilities['xfade_available'] and not capabilities['xfade_opencl_available']:
         print("  ⚠️  WARNING: No xfade support detected! Transitions may not work.")
