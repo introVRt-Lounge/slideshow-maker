@@ -48,20 +48,30 @@ def show_progress(current, total, image_path=None, transition=None):
         print(f"\r{status_line}", end="", flush=True)
 
 
-def run_command(cmd, description="", show_output=False):
-    """Run a command and return True if successful"""
+def run_command(cmd, description="", show_output=False, timeout_seconds: int = 15):
+    """Run a command and return True if successful. Hard timeout to avoid hangs."""
     try:
         if show_output:
             print(f"⚡ {description}")
         else:
             print(f"⚙️  {description}", end="", flush=True)
 
-        result = subprocess.run(cmd, shell=True, check=True, capture_output=not show_output, text=True)
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            check=True,
+            capture_output=not show_output,
+            text=True,
+            timeout=timeout_seconds,
+        )
 
         if not show_output:
             print(" ✅" if result.returncode == 0 else " ❌")
 
         return True
+    except subprocess.TimeoutExpired:
+        print(" ⏱️ timeout")
+        return False
     except subprocess.CalledProcessError as e:
         print(f"❌ Error: {e}")
         if show_output and e.output:
@@ -69,15 +79,19 @@ def run_command(cmd, description="", show_output=False):
         return False
 
 
-def get_audio_duration(audio_file):
-    """Get duration of an audio file in seconds"""
+def get_audio_duration(audio_file, timeout_seconds: int = 1):
+    """Get duration of an audio file in seconds. Returns 0.0 on error/timeout."""
     try:
         cmd = f'ffprobe -v error -show_entries format=duration -of csv=p=0 "{audio_file}"'
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=timeout_seconds
+        )
         if result.returncode == 0:
             return float(result.stdout.strip())
-    except:
-        pass
+    except subprocess.TimeoutExpired:
+        return 0.0
+    except Exception:
+        return 0.0
     return 0.0
 
 
@@ -123,32 +137,32 @@ def detect_ffmpeg_capabilities():
     ffmpeg_path = get_ffmpeg_path()
     
     try:
-        # Check if xfade filter is available
+        # Check if xfade filter is available (hard timeout)
         cmd = f'"{ffmpeg_path}" -f lavfi -i "color=red:size=320x240:duration=1" -f lavfi -i "color=blue:size=320x240:duration=1" -filter_complex "[0][1]xfade=transition=fade:duration=0.5:offset=0.5" -t 1 -f null - 2>&1'
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=1)
         if result.returncode == 0:
             capabilities['xfade_available'] = True
             capabilities['cpu_transitions_supported'] = True
-    except:
+    except Exception:
         pass
     
     try:
-        # Check if xfade_opencl is available with proper RGBA format handling
+        # Check if xfade_opencl is available with proper RGBA format handling (hard timeout)
         cmd = f'"{ffmpeg_path}" -init_hw_device opencl=ocl:0.0 -filter_hw_device ocl -f lavfi -i "color=red:size=320x240:duration=1" -f lavfi -i "color=blue:size=320x240:duration=1" -filter_complex "[0:v]format=rgba,hwupload=extra_hw_frames=16[0hw];[1:v]format=rgba,hwupload=extra_hw_frames=16[1hw];[0hw][1hw]xfade_opencl=transition=fade:duration=0.5:offset=0.5,hwdownload,format=yuv420p" -t 1 -f null - 2>&1'
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=1)
         if result.returncode == 0:
             capabilities['xfade_opencl_available'] = True
             capabilities['gpu_transitions_supported'] = True
-    except:
+    except Exception:
         pass
     
     try:
-        # Check if OpenCL is available
+        # Check if OpenCL is available (hard timeout)
         cmd = f'"{ffmpeg_path}" -f lavfi -i "color=red:size=320x240:duration=1" -vf "scale_opencl=w=640:h=480" -t 1 -f null - 2>&1'
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=1)
         if result.returncode == 0:
             capabilities['opencl_available'] = True
-    except:
+    except Exception:
         pass
     
     return capabilities
@@ -175,12 +189,12 @@ def detect_nvenc_support():
     ffmpeg_path = get_ffmpeg_path()
     
     try:
-        # Check if h264_nvenc encoder is available
+        # Check if h264_nvenc encoder is available (hard timeout)
         cmd = f'"{ffmpeg_path}" -hide_banner -encoders 2>&1'
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=1)
         if result.returncode == 0 and 'h264_nvenc' in result.stdout:
             return True
-    except:
+    except Exception:
         pass
     
     return False

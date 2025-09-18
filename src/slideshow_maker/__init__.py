@@ -20,8 +20,13 @@ from .transitions import (
 )
 from .audio import find_audio_files, merge_audio, combine_video_audio, get_total_audio_duration
 from .video import create_slideshow
-from .beat_detection import detect_beats
-from .beat_selection import select_beats
+try:
+    from .beat_detection import detect_beats
+    from .beat_selection import select_beats
+except ImportError:
+    # Beat detection requires numpy, make it optional
+    detect_beats = None
+    select_beats = None
 from .utils import get_image_info, show_progress, run_command, get_audio_duration
 from .config import (
     TRANSITIONS, TRANSITION_CATEGORIES, DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_FPS,

@@ -23,8 +23,8 @@ def main():
     image_dir = "."
     test_mode = False
     dry_run = False
-    min_duration = 3
-    max_duration = 5
+    min_duration = 7
+    max_duration = 10
 
     # Parse command line arguments
     i = 0
