@@ -135,6 +135,24 @@ def get_all_transitions():
     return TRANSITIONS.copy()
 
 
+def get_available_transitions():
+    """Get transitions available based on FFmpeg capabilities"""
+    from .utils import get_available_transitions as utils_get_available
+    return utils_get_available()
+
+
+def get_cpu_transitions():
+    """Get CPU-only transitions"""
+    from .config import CPU_TRANSITIONS
+    return CPU_TRANSITIONS.copy()
+
+
+def get_gpu_transitions():
+    """Get GPU-accelerated transitions"""
+    from .config import GPU_TRANSITIONS
+    return GPU_TRANSITIONS.copy()
+
+
 def get_transition_count():
     """Get the total number of available transitions"""
     return len(TRANSITIONS)

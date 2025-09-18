@@ -12,7 +12,7 @@ from .config import (
     DEFAULT_CHUNK_SIZE, VIDEO_OUTPUT
 )
 from .transitions import get_random_transition
-from .utils import run_command, get_image_info
+from .utils import run_command, get_image_info, get_available_transitions, print_ffmpeg_capabilities
 
 
 def create_slideshow(images, output_file, min_duration=DEFAULT_MIN_DURATION, 
@@ -45,13 +45,28 @@ def create_slideshow_chunked(images, output_file, min_duration=DEFAULT_MIN_DURAT
     temp_dir = "temp_chunks"
     os.makedirs(temp_dir, exist_ok=True)
 
-    from .config import TRANSITIONS
+    # Detect FFmpeg capabilities and get available transitions
+    available_transitions, capabilities = get_available_transitions()
+    
+    if not available_transitions:
+        print("❌ No transitions available! FFmpeg xfade support not detected.")
+        print("   Please install FFmpeg with xfade filter support.")
+        return False
 
     chunk_files = []
 
     print(f"📦 Processing {len(images)} images in chunks of {chunk_size}")
-    print(f"🎭 Using ALL {len(TRANSITIONS)} FFmpeg xfade transition types for MAXIMUM variety!")
-    print(f"✨ Transitions include: fades, wipes, slides, circles, diagonals, slices, wind effects, and more!")
+    print(f"🎭 Using {len(available_transitions)} available FFmpeg xfade transition types!")
+    
+    # Print capability information
+    print_ffmpeg_capabilities()
+    
+    if capabilities['cpu_transitions_supported'] and capabilities['gpu_transitions_supported']:
+        print("✨ Both CPU and GPU transitions available - maximum variety!")
+    elif capabilities['cpu_transitions_supported']:
+        print("💻 Using CPU transitions only (GPU not available)")
+    elif capabilities['gpu_transitions_supported']:
+        print("🎮 Using GPU transitions only (CPU fallback not available)")
 
     # Process images in very small chunks
     for chunk_idx, chunk_start in enumerate(range(0, len(images), chunk_size)):
@@ -104,7 +119,7 @@ def create_slideshow_chunked(images, output_file, min_duration=DEFAULT_MIN_DURAT
                     transition_file = f"{temp_dir}/transition_{chunk_idx}_{j}.mp4"
 
                     # CYCLE THROUGH DIFFERENT TRANSITION TYPES for variety!
-                    transition_type = TRANSITIONS[(j-1) % len(TRANSITIONS)]
+                    transition_type = available_transitions[(j-1) % len(available_transitions)]
 
                     # Use DRAMATIC transition - 1 second duration so it's UNMISSABLE
                     # ADD TEXT OVERLAY TO SHOW WHICH TRANSITION IS BEING USED!

@@ -32,38 +32,28 @@ AUDIO_OUTPUT = "audio_merged.m4a"
 VIDEO_OUTPUT = "slideshow_video.mp4"
 FINAL_OUTPUT = "slideshow_with_audio.mp4"
 
-# COMPLETE FFMPEG XFADE TRANSITIONS - ALL 50+ AVAILABLE TYPES!
+# FFMPEG XFADE TRANSITIONS - CPU COMPATIBLE (No GPU Required)
 # Based on https://trac.ffmpeg.org/wiki/Xfade
-TRANSITIONS = [
+# These transitions work with standard xfade filter (no OpenCL/GPU required)
+CPU_TRANSITIONS = [
     # Basic fades
-    'fade',         # Simple crossfade (default)
     'fadeblack',    # Fade through black
     'fadewhite',    # Fade through white
     'fadegrays',    # Fade through grayscale
     
-    # Wipe effects
-    'wipeleft',     # Wipe from left to right
-    'wiperight',    # Wipe from right to left
-    'wipeup',       # Wipe from bottom to top
-    'wipedown',     # Wipe from top to bottom
+    # Wipe effects (corner wipes - CPU only)
     'wipetl',       # Wipe from top-left
     'wipetr',       # Wipe from top-right
     'wipebl',       # Wipe from bottom-left
     'wipebr',       # Wipe from bottom-right
     
-    # Slide effects
-    'slideleft',    # Slide from left
-    'slideright',   # Slide from right
-    'slideup',      # Slide from bottom
-    'slidedown',    # Slide from top
-    
-    # Smooth effects
+    # Smooth effects (CPU only)
     'smoothleft',   # Smooth wipe from left
     'smoothright',  # Smooth wipe from right
     'smoothup',     # Smooth wipe from bottom
     'smoothdown',   # Smooth wipe from top
     
-    # Circle effects
+    # Circle effects (CPU only)
     'circlecrop',   # Circular crop transition
     'circleclose',  # Circle closing
     'circleopen',   # Circle opening
@@ -71,56 +61,80 @@ TRANSITIONS = [
     # Rectangle effects
     'rectcrop',     # Rectangular crop transition
     
-    # Horizontal/Vertical effects
+    # Horizontal/Vertical effects (CPU only)
     'horzclose',    # Horizontal close
     'horzopen',     # Horizontal open
     'vertclose',    # Vertical close
     'vertopen',     # Vertical open
     
-    # Diagonal effects
+    # Diagonal effects (CPU only)
     'diagbl',       # Diagonal bottom-left
     'diagbr',       # Diagonal bottom-right
     'diagtl',       # Diagonal top-left
     'diagtr',       # Diagonal top-right
     
-    # Slice effects
+    # Slice effects (CPU only)
     'hlslice',      # Horizontal left slice
     'hrslice',      # Horizontal right slice
     'vuslice',      # Vertical up slice
     'vdslice',      # Vertical down slice
     
-    # Special effects
+    # Special effects (CPU only)
     'dissolve',     # Dissolve effect
     'pixelize',     # Pixelize effect
     'radial',       # Radial transition
     'hblur',        # Horizontal blur
     'distance',     # Distance effect
     
-    # Squeeze effects
+    # Squeeze effects (CPU only)
     'squeezev',     # Vertical squeeze
     'squeezeh',     # Horizontal squeeze
     
-    # Zoom effects
+    # Zoom effects (CPU only)
     'zoomin',       # Zoom in transition
     
-    # Wind effects
+    # Wind effects (CPU only)
     'hlwind',       # Horizontal left wind
     'hrwind',       # Horizontal right wind
     'vuwind',       # Vertical up wind
     'vdwind',       # Vertical down wind
     
-    # Cover effects
+    # Cover effects (CPU only)
     'coverleft',    # Cover from left
     'coverright',   # Cover from right
     'coverup',      # Cover from bottom
     'coverdown',    # Cover from top
     
-    # Reveal effects
+    # Reveal effects (CPU only)
     'revealleft',   # Reveal from left
     'revealright',  # Reveal from right
     'revealup',     # Reveal from bottom
     'revealdown',   # Reveal from top
 ]
+
+# FFMPEG XFADE TRANSITIONS - GPU ACCELERATED (OpenCL Required)
+# These transitions are marked as **bold** in the FFmpeg documentation
+# and are available in xfade_opencl (requires OpenCL and compatible GPU)
+GPU_TRANSITIONS = [
+    # Basic fades (GPU accelerated)
+    'fade',         # Simple crossfade (default) - **BOLD** in docs
+    
+    # Wipe effects (GPU accelerated)
+    'wipeleft',     # Wipe from left to right - **BOLD** in docs
+    'wiperight',    # Wipe from right to left - **BOLD** in docs
+    'wipeup',       # Wipe from bottom to top - **BOLD** in docs
+    'wipedown',     # Wipe from top to bottom - **BOLD** in docs
+    
+    # Slide effects (GPU accelerated)
+    'slideleft',    # Slide from left - **BOLD** in docs
+    'slideright',   # Slide from right - **BOLD** in docs
+    'slideup',      # Slide from bottom - **BOLD** in docs
+    'slidedown',    # Slide from top - **BOLD** in docs
+]
+
+# ALL TRANSITIONS (CPU + GPU)
+# This combines both CPU and GPU transitions for maximum compatibility
+TRANSITIONS = CPU_TRANSITIONS + GPU_TRANSITIONS
 
 # Transition categories for organization
 TRANSITION_CATEGORIES = {

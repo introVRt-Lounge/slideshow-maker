@@ -79,3 +79,92 @@ def get_audio_duration(audio_file):
     except:
         pass
     return 0.0
+
+
+def detect_ffmpeg_capabilities():
+    """Detect FFmpeg capabilities for transitions"""
+    capabilities = {
+        'xfade_available': False,
+        'xfade_opencl_available': False,
+        'opencl_available': False,
+        'gpu_transitions_supported': False,
+        'cpu_transitions_supported': False
+    }
+    
+    try:
+        # Check if xfade filter is available
+        cmd = 'ffmpeg -f lavfi -i "color=red:size=320x240:duration=1" -f lavfi -i "color=blue:size=320x240:duration=1" -filter_complex "[0][1]xfade=transition=fade:duration=0.5:offset=0.5" -t 1 -f null - 2>&1'
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if result.returncode == 0:
+            capabilities['xfade_available'] = True
+            capabilities['cpu_transitions_supported'] = True
+    except:
+        pass
+    
+    try:
+        # Check if xfade_opencl is available
+        cmd = 'ffmpeg -f lavfi -i "color=red:size=320x240:duration=1" -f lavfi -i "color=blue:size=320x240:duration=1" -filter_complex "[0][1]xfade_opencl=transition=fade:duration=0.5:offset=0.5" -t 1 -f null - 2>&1'
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if result.returncode == 0:
+            capabilities['xfade_opencl_available'] = True
+            capabilities['gpu_transitions_supported'] = True
+    except:
+        pass
+    
+    try:
+        # Check if OpenCL is available
+        cmd = 'ffmpeg -f lavfi -i "color=red:size=320x240:duration=1" -vf "scale_opencl=640:480" -t 1 -f null - 2>&1'
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if result.returncode == 0:
+            capabilities['opencl_available'] = True
+    except:
+        pass
+    
+    return capabilities
+
+
+def get_available_transitions():
+    """Get list of transitions available based on FFmpeg capabilities"""
+    from .config import CPU_TRANSITIONS, GPU_TRANSITIONS
+    
+    capabilities = detect_ffmpeg_capabilities()
+    available_transitions = []
+    
+    if capabilities['cpu_transitions_supported']:
+        available_transitions.extend(CPU_TRANSITIONS)
+    
+    if capabilities['gpu_transitions_supported']:
+        available_transitions.extend(GPU_TRANSITIONS)
+    
+    return available_transitions, capabilities
+
+
+def print_ffmpeg_capabilities():
+    """Print FFmpeg capabilities information"""
+    from .config import CPU_TRANSITIONS, GPU_TRANSITIONS
+    
+    capabilities = detect_ffmpeg_capabilities()
+    
+    print("🔍 FFmpeg Capability Detection:")
+    print(f"  📊 xfade filter (CPU): {'✅ Available' if capabilities['xfade_available'] else '❌ Not available'}")
+    print(f"  🚀 xfade_opencl (GPU): {'✅ Available' if capabilities['xfade_opencl_available'] else '❌ Not available'}")
+    print(f"  🎮 OpenCL support: {'✅ Available' if capabilities['opencl_available'] else '❌ Not available'}")
+    
+    if capabilities['cpu_transitions_supported']:
+        print(f"  💻 CPU transitions: ✅ {len(CPU_TRANSITIONS)} available")
+    else:
+        print("  💻 CPU transitions: ❌ Not supported")
+    
+    if capabilities['gpu_transitions_supported']:
+        print(f"  🎮 GPU transitions: ✅ {len(GPU_TRANSITIONS)} available")
+    else:
+        print("  🎮 GPU transitions: ❌ Not supported")
+    
+    total_available = len(get_available_transitions()[0])
+    print(f"  🎬 Total transitions: {total_available}")
+    
+    if not capabilities['xfade_available'] and not capabilities['xfade_opencl_available']:
+        print("  ⚠️  WARNING: No xfade support detected! Transitions may not work.")
+        print("     Install FFmpeg with xfade filter support.")
+    
+    return capabilities

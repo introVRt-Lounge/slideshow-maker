@@ -13,7 +13,7 @@ from .config import (
 )
 from .audio import find_audio_files, merge_audio, combine_video_audio, get_total_audio_duration
 from .video import create_slideshow
-from .utils import show_progress
+from .utils import show_progress, print_ffmpeg_capabilities
 
 
 def find_images(directory):
@@ -90,6 +90,11 @@ def create_slideshow_with_audio(image_dir, test_mode=False, min_duration=DEFAULT
     print(f"📁 Working directory: {image_dir}")
     print(f"⚙️  Test mode: {'ON (1-minute video)' if test_mode else 'OFF (full video)'}")
     print(f"⏱️  Image duration range: {min_duration}-{max_duration} seconds")
+    
+    # Check FFmpeg capabilities
+    print("\n" + "="*50)
+    print_ffmpeg_capabilities()
+    print("="*50)
 
     # Find audio first (needed for duration calculation)
     audio_files = find_audio_files(image_dir)
