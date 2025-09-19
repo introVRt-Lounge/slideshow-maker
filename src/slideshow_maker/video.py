@@ -987,8 +987,17 @@ def create_slideshow_chunked(images, output_file, min_duration=DEFAULT_MIN_DURAT
                     curr_clip = temp_clips[j]
                     transition_file = f"{temp_dir}/transition_{chunk_idx}_{j}.mp4"
 
-                    # RANDOMLY SELECT TRANSITION TYPES for maximum variety!
-                    transition_type = random.choice(available_transitions)
+                    # RANDOMLY SELECT TRANSITION TYPES for maximum variety, but ensure ffmpeg supports it
+                    candidates = available_transitions[:]
+                    random.shuffle(candidates)
+                    transition_type = None
+                    for cand in candidates:
+                        test_cmd = f'ffmpeg -v error -f lavfi -i "color=red:size=320x240:duration=2" -f lavfi -i "color=blue:size=320x240:duration=2" -filter_complex "[0:v][1:v]xfade=transition={cand}:duration=1.0:offset=1.0" -t 1 -f null -'
+                        if run_command(test_cmd, f"    Probe transition {cand}", show_output=False):
+                            transition_type = cand
+                            break
+                    if transition_type is None:
+                        transition_type = 'fade'
 
                     # Use DRAMATIC transition - 1 second duration so it's UNMISSABLE
                     # ADD TEXT OVERLAY TO SHOW WHICH TRANSITION IS BEING USED!
