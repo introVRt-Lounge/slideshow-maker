@@ -434,6 +434,7 @@ Implement intelligent beat detection and alignment system that automatically syn
 - Documentation should be updated for each feature
 - Performance impact should be considered for each feature
 - User experience should be prioritized in all implementations
+- All test movie files must include an audio track (muxed). Tests and smoke demos should verify audio is present in outputs.
 
 ## 🔍 Beat-Alignment Feature Critique
 
@@ -541,7 +542,7 @@ Implement intelligent beat detection and alignment system that automatically syn
   - [ ] For large segment counts, renderer auto-selects hardcut path (guard tested)
 
 - Integration E2E (fast)
-  - [ ] 10-20s synthetic audio + 8 images; asserts muxed mp4 exists and basic size
+  - [ ] 10-20s audio-backed demo (mp3/m4a) + 8 images; asserts muxed mp4 exists, has audio stream, and basic size
   - [ ] --all-beats diagnostic path with hardcuts and overlays
 
 Notes:

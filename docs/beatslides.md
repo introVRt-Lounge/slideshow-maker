@@ -101,9 +101,12 @@ Notes:
   - Adds gaussian blur pulse at each beat for a soft bloom.
   - Defaults: `--bloom-sigma 8.0 --bloom-dur 0.08`.
 
-- **--counter**
-  - Shows a sticky beat counter that increments each beat and persists until the next beat.
-  - Options: `--counter-size 36` and `--counter-pos tr|tl|br|bl`.
+- **--mask-scope none|foreground|background** (requires rembg)
+  - Restrict pulse/glow overlays and per-boundary fallback effects to just the subject (foreground) or just the background.
+  - Mask sources: the renderer prefers precomputed masks placed next to images as `<name>_mask.png` or in a sibling `masks/<name>_mask.png`. If not present and rembg is available, masks are generated lazily.
+  - Pipeline: effects are applied on a split branch, alpha-merged with the (possibly inverted) grayscale mask, and composited back over the unmodified base using `alphamerge` + `overlay`. This preserves full color while guaranteeing no bleed onto the protected region.
+  - Mask sync: the mask stream is scaled/padded to match each input and crossfaded in lockstep with the visuals so boundaries stay aligned.
+  - Notes: mask generation adds processing time; if rembg is unavailable, scope silently falls back to `none`.
 
 ### Safety fallback
 
@@ -114,6 +117,7 @@ Notes:
 
 - **--no-audio**
   - Skip muxing. By default, the final MP4 includes the input audio.
+- Test policy: all test movie files must include audio. For smoke demos, prefer muxed outputs; only use `--no-audio` for filter-graph diagnostics.
 
 ### Examples
 
