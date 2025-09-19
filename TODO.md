@@ -470,6 +470,84 @@ Implement intelligent beat detection and alignment system that automatically syn
 
 ---
 
+### 🔜 Beat-Aligned: Next Phases
+
+- [ ] Phase 2c: Per-segment transition fallback and stability
+  - [x] Fallback to hardcut for too-short boundaries
+  - [x] Add --xfade-min threshold and per-boundary fallback styles (whitepop/blackflash/pulse/bloom)
+  - [x] Guard: auto-hardcut when segment count is very high
+  - [ ] Unit tests: verify fallback triggers and effect enable windows
+
+- [ ] Phase 2d: Frame controls and overlays polish
+  - [x] Add --frame-quantize nearest|floor|ceil
+  - [x] Sticky counter overlays in both modes
+  - [ ] Tests: counter continuity across clips; quantization correctness at 24/25/30 fps
+
+- [ ] Phase 3: Presets and UX
+  - [x] Presets: music-video, hypercut, slow-cinematic, documentary, edm-strobe
+  - [x] Non-clobbering preset application; min-gap safety
+  - [ ] Tests: preset mapping table; user overrides win; min-gap auto-adjust
+
+- [ ] Phase 4: Musical structure
+  - [ ] Downbeats/bars/phrases; half/double-time handling
+  - [ ] Tempo change adaptation; local BPM windows
+  - [ ] Optional cut bias to downbeats/phrase starts
+
+- [ ] Phase 5: Auto phase/latency calibration
+  - [ ] Generate calibration clip; search best --phase per track
+  - [ ] Cache per-track phase in plan JSON; reuse
+
+- [ ] Phase 6: Visual dynamics
+  - [ ] On-beat Ken Burns (zoom/rotate pulses); color-matched fades
+  - [ ] Energy-to-transition mapping; ramp durations
+
+- [ ] Phase 7: Performance & robustness
+  - [ ] Chunked xfade pipeline for large segment counts
+  - [x] Use filter_complex_script to avoid arg-length limits
+  - [ ] ffconcat input lists for very large image sets
+  - [ ] Better progress/ETA; resume from temp
+
+- [ ] Phase 8: Plans & tooling
+  - [x] --plan-out/--plan-in planning JSON
+  - [ ] Plan diff/inspect CLI; human-readable summaries
+  - [ ] Preset JSON import/export
+
+---
+
+### ✅ Beat-Aligned: Test Plan (additions)
+
+- Detection/selection
+  - [ ] Mock aubio/librosa detectors; ensure cleaned beat list (no dups, min gap)
+  - [ ] Window-constrained selection: respects [period_min, period_max]
+  - [ ] Strategy=nearest correctness on synthetic beat grids
+
+- Rendering correctness (mock ffmpeg)
+  - [ ] Hardcuts: exact segment counts, per-segment frames match quantized durations
+  - [ ] Transitions: offset/td_eff math for align=end|midpoint
+  - [ ] Per-segment fallback: when td_eff < --xfade-min, chain uses concat not xfade
+  - [ ] Fallback styles: enable window inserted at boundary (whitepop/blackflash/pulse/bloom)
+
+- Overlays
+  - [ ] Beat ticks render at provided beat times; overlay_guard suppresses near-landings
+  - [ ] Counter persists between beats and across clip boundaries; never resets in mid-video
+
+- Presets/CLI
+  - [ ] Preset application is non-clobbering; explicit flags override
+  - [ ] min-gap auto-enforcement >= 2*xfade+0.05
+  - [ ] Plan I/O round-trip: --plan-out then --plan-in reproduces durations/images
+
+- Performance/timeout
+  - [ ] All ffmpeg/ffprobe commands use timeouts; tests prove non-hanging behavior
+  - [ ] For large segment counts, renderer auto-selects hardcut path (guard tested)
+
+- Integration E2E (fast)
+  - [ ] 10-20s synthetic audio + 8 images; asserts muxed mp4 exists and basic size
+  - [ ] --all-beats diagnostic path with hardcuts and overlays
+
+Notes:
+- Prefer mocking subprocess to keep runtime < 60s for whole suite.
+- Avoid probing large outputs in tests; rely on planned durations and mocks.
+
 *Last updated: $(date)*
 *Total remaining features: 9 (including Beat-Aligned System)*
 *Estimated total effort: 8-10 weeks*
