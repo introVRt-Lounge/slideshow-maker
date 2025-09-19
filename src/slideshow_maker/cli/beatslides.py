@@ -63,6 +63,7 @@ def main(argv: List[str]) -> int:
     p.add_argument("--xfade-min", type=float, default=0.25, help="Minimum effective xfade seconds; shorter boundaries hardcut")
     p.add_argument("--fallback-style", type=str, choices=["none","pulse","bloom","whitepop","blackflash"], default="none", help="Effect to apply on too-short boundaries")
     p.add_argument("--fallback-dur", type=float, default=0.06, help="Duration of per-boundary fallback effect")
+    p.add_argument("--mask-scope", type=str, choices=["none","foreground","background"], default="none", help="Restrict pulse/bloom to foreground or background using rembg mask")
     args = p.parse_args(argv)
 
     # Apply preset defaults early (without clobbering explicit overrides)
@@ -270,6 +271,7 @@ def main(argv: List[str]) -> int:
             counter_beats=beats if args.counter else None,
             counter_fontsize=int(args.counter_size),
             counter_position=str(args.counter_pos),
+            mask_scope=str(args.mask_scope),
         )
     else:
         try:
@@ -305,6 +307,7 @@ def main(argv: List[str]) -> int:
             counter_beats=beats if args.counter else None,
             counter_fontsize=int(args.counter_size),
             counter_position=str(args.counter_pos),
+            mask_scope=str(args.mask_scope),
         )
     if not ok:
         return 4
