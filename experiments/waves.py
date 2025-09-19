@@ -4,15 +4,16 @@ Waveform/spectrum overlays driven by the video's own audio.
 
 Presets:
   bottom     - full-width waveform footer
-  inset      - small waveform with a translucent backing plate (top-right)
   spectrum   - full-width scrolling spectrum footer
-  equalizer  - stereo graphic-EQ bars (L on top, R on bottom)
+  waveform   - stereo center-mirrored waveform (L on top, R on bottom)
+  equalizer  - classic LED-style VU meter with discrete columns
 
 Examples:
   python make_overlay.py
-  python make_overlay.py -i beat_aligned_with_audio.mp4 -p equalizer --height 320
-  python make_overlay.py -i beat_aligned_with_audio.mp4 -p equalizer --height 320 --blend-mode multiply
-  python make_overlay.py -i beat_aligned_with_audio.mp4 -p bottom --color 0x00ffcc --height 220
+  python make_overlay.py -i beat_aligned_with_audio.mp4 -p bottom --height 200
+  python make_overlay.py -i beat_aligned_with_audio.mp4 -p spectrum --height 300
+  python make_overlay.py -i beat_aligned_with_audio.mp4 -p waveform --height 200
+  python make_overlay.py -i beat_aligned_with_audio.mp4 -p equalizer --bands 10 --levels 16 --height 320
 """
 
 import argparse, os, shutil, subprocess, sys
@@ -42,18 +43,6 @@ def build_filter(preset, args):
         )
         return f, "wave_bottom"
 
-    elif preset == "inset":
-        # Inset thicker waveform with a translucent plate; uses expressions (no hardcoded 1920).
-        w = args.width
-        color = args.color
-        f = (
-            f"[0:a]aformat=channel_layouts=mono,"
-            f"showwaves=s={w}x{h}:mode=p2p:colors={color},"
-            f"format=rgba,colorkey=0x000000:0.01:0.0[w];"
-            f"[0:v]format=rgba,drawbox=x=W-{w}-20:y=20:w={w}:h={h}:color=black@0.45:t=fill[vb];"
-            f"[vb][w]overlay=x=W-w-20:y=20[v]"
-        )
-        return f, "wave_inset"
 
     elif preset == "spectrum":
         # Scrolling spectrum footer (pretty but heavier).
@@ -67,40 +56,91 @@ def build_filter(preset, args):
         )
         return f, "spectrum_footer"
 
-    elif preset == "equalizer":
-        # Graphic equalizer bars with flipped right channel.
-        # Left channel on top (normal), right channel on bottom (flipped).
-        # Both channels: bass left, treble right, mirrored out from midpoint.
-        eq_height = h // 2  # Height per channel
+    elif preset == "waveform":
+        # Stereo center-mirrored waveform: bass in middle, treble at edges
+        # Left channel on top (normal), right channel on bottom (mirrored)
+        # Positioned in bottom quarter of screen, full width
+        wave_height = h // 2  # Height per channel
         colors = args.eq_colors or "0x00ffcc|0xff0066"
         blend_mode = getattr(args, 'blend_mode', 'normal')
+        # Position in bottom quarter: y = 1080 - h = 1080 - 200 = 880 for default
+        y_pos = 1080 - h
         f = (
             f"[0:a]asplit=2[al][ar];"  # Split stereo into left and right
-            f"[al]showfreqs="           # Left channel (top, normal orientation)
-              f"s=1280x{eq_height}:"
+            f"[al]showwaves="           # Left channel (top, normal orientation)
+              f"s=1920x{wave_height}:"  # Full width
+              f"mode=cline:"
+              f"colors={colors.split('|')[0]},"
+            f"format=rgba[wl];"
+            f"[ar]showwaves="           # Right channel (bottom, will be flipped)
+              f"s=1920x{wave_height}:"
+              f"mode=cline:"
+              f"colors={colors.split('|')[1] if '|' in colors else colors},"
+            f"format=rgba,vflip[wr];"  # Flip right channel vertically
+            f"[wl][wr]vstack,"         # Stack left on top, flipped right on bottom
+            f"format=rgba,"
+            f"scale=1920:{h}[wave];"   # Scale to full width and specified height
+            f"[0:v]format=rgba[vid];"
+            f"[vid][wave]overlay=x=0:y={y_pos}:format=rgb[v]"
+        )
+        return f, f"waveform_{blend_mode}"
+
+    elif preset == "equalizer":
+        # Classic LED-style VU meter with discrete columns and stacked boxes
+        # Uses showfreqs with nearest-neighbor scaling for pixelated LED effect
+        bands = getattr(args, 'bands', 10)
+        levels = getattr(args, 'levels', 16)
+        grid_thickness = getattr(args, 'grid', 1)
+        colors = args.eq_colors or "0x00ffcc|0xff0066"
+
+        eq_height = h // 2  # Height per channel
+
+        f = (
+            f"[0:a]asplit=2[al][ar];"  # Split stereo into left and right
+            f"[al]showfreqs="           # Left channel (top)
+              f"s={bands}x{levels}:"    # Tiny logical resolution
               f"mode=bar:"
+              f"cmode=separate:"
               f"ascale=log:"
               f"fscale=log:"
               f"win_size=2048:"
               f"overlap=1:"
               f"colors={colors.split('|')[0]},"
-            f"format=rgba[el];"
+            f"format=rgba,"
+            f"scale=1920:{eq_height}:flags=neighbor[el];"  # Scale up with nearest neighbor
             f"[ar]showfreqs="           # Right channel (bottom, will be flipped)
-              f"s=1280x{eq_height}:"
+              f"s={bands}x{levels}:"
               f"mode=bar:"
+              f"cmode=separate:"
               f"ascale=log:"
               f"fscale=log:"
               f"win_size=2048:"
               f"overlap=1:"
               f"colors={colors.split('|')[1] if '|' in colors else colors},"
-            f"format=rgba,vflip[er];"  # Flip right channel vertically
-            f"[el][er]vstack,"         # Stack left on top, flipped right on bottom
             f"format=rgba,"
-            f"scale=1920:1080[eq];"   # Scale equalizer to match video dimensions
-            f"[0:v]format=rgba[vid];"
-            f"[vid][eq]blend=all_mode={blend_mode}:all_opacity=1.0[v]"
+            f"scale=1920:{eq_height}:flags=neighbor,"  # Scale up with nearest neighbor
+            f"vflip[er];"  # Flip right channel vertically
         )
-        return f, f"eq_{blend_mode}"
+
+        # Add optional grid overlay
+        if grid_thickness > 0:
+            f += (
+                f"[el]drawgrid=w={bands*1920//bands}:h={levels*eq_height//levels}:"
+                f"t={grid_thickness}:c=white@0.3[el_grid];"
+                f"[er]drawgrid=w={bands*1920//bands}:h={levels*eq_height//levels}:"
+                f"t={grid_thickness}:c=white@0.3[er_grid];"
+                f"[el_grid][er_grid]vstack,"
+            )
+        else:
+            f += f"[el][er]vstack,"
+
+        f += (
+            f"format=rgba,"
+            f"scale=1920:{h}[eq];"     # Scale to full width and specified height
+            f"[0:v]format=rgba[vid];"
+            f"[vid][eq]overlay=x=0:y=1080-{h}:format=rgb[v]"
+        )
+        return f, f"eq_{bands}x{levels}"
 
     else:
         raise ValueError(f"Unknown preset: {preset}")
@@ -109,13 +149,16 @@ def main():
     p = argparse.ArgumentParser(description="Overlay a waveform/spectrum on a video's own audio via ffmpeg.")
     p.add_argument("-i", "--input", default="beat_aligned_with_audio.mp4", help="Input video file")
     p.add_argument("-o", "--output", default=None, help="Output file path. If omitted, auto-names by preset.")
-    p.add_argument("-p", "--preset", choices=["bottom", "inset", "spectrum", "equalizer"], default="bottom", help="Overlay style")
+    p.add_argument("-p", "--preset", choices=["bottom", "spectrum", "waveform", "equalizer"], default="bottom", help="Overlay style")
     p.add_argument("--color", default="0x00ffcc", help="Waveform color for bottom/inset")
     p.add_argument("--spec-color", default="rainbow", help="Palette for spectrum preset")
     p.add_argument("--eq-colors", dest="eq_colors", default=None, help="Equalizer colors per channel, e.g. '0x00ffcc|0xff0066'")
-    p.add_argument("--blend-mode", dest="blend_mode", default="normal", choices=["normal", "multiply", "screen", "overlay", "darken", "lighten", "difference", "addition", "subtract", "burn", "dodge", "hardlight", "softlight"], help="Blending mode for overlay (equalizer preset)")
+    p.add_argument("--blend-mode", dest="blend_mode", default="normal", choices=["normal", "multiply", "screen", "overlay", "darken", "lighten", "difference", "addition", "subtract", "burn", "dodge", "hardlight", "softlight"], help="Blending mode for overlay (waveform preset)")
     p.add_argument("--height", type=int, default=200, help="Overlay height in px (footer or inset)")
     p.add_argument("--width", type=int, default=640, help="Inset overlay width in px (inset preset)")
+    p.add_argument("--bands", type=int, default=10, help="Number of frequency bands for equalizer (default 10)")
+    p.add_argument("--levels", type=int, default=16, help="Number of LED levels per band for equalizer (default 16)")
+    p.add_argument("--grid", type=int, default=1, help="Grid line thickness in px for equalizer (0 to disable)")
     p.add_argument("--fps", type=int, default=None, help="Force output FPS, e.g. 30")
     p.add_argument("--crf", type=int, default=18, help="x264 CRF (quality). Lower is better. Default 18.")
     p.add_argument("--vpreset", default="veryfast", help="x264 speed preset. Default veryfast.")

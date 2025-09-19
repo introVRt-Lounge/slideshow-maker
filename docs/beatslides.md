@@ -68,6 +68,14 @@ Notes:
 - In `--align midpoint`, the fade starts before the beat and the mid-point of the fade lands on the beat. Red cut markers (if enabled) visualize the transition landing; white ticks visualize actual beat times.
 - For strict on-beat hardcuts, use `--hardcuts` (no crossfade) and verify alignment with `--mark-beats`.
 
+### Frame quantization
+
+- **--frame-quantize nearest|floor|ceil** (default: nearest)
+  - Quantizes each segment duration to the video frame grid to avoid sub-frame drift.
+  - nearest: round to nearest frame (balanced)
+  - floor: always shorten to previous frame boundary (keeps cuts early)
+  - ceil: always extend to next frame boundary (keeps cuts late)
+
 ### Debug overlays (hardcuts mode)
 
 - **--mark-beats**
@@ -118,7 +126,7 @@ Transitions with on-beat overlays (every other beat) and guard near transitions:
 ```bash
 PYTHONPATH=src python3 -m slideshow_maker.cli.beatslides song.mp3 ./images \
   --transition fade --xfade 0.6 --align midpoint --phase -0.03 \
-  --beat-mult 2 --overlay-guard 0.08 --debug
+  --beat-mult 2 --overlay-guard 0.08 --frame-quantize floor --debug
 ```
 
 ### Notes

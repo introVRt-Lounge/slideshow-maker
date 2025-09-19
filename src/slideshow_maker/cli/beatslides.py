@@ -55,27 +55,30 @@ def main(argv: List[str]) -> int:
     p.add_argument("--overlay-phase", type=float, default=0.0, help="Overlay phase offset seconds (advance/retard overlays)")
     p.add_argument("--cut-markers", action="store_true", default=False, help="Draw red tick marks at transition landings")
     p.add_argument("--overlay-guard", type=float, default=0.0, help="Do not pulse/tick within N seconds of a transition")
+    p.add_argument("--frame-quantize", type=str, choices=["nearest","floor","ceil"], default="nearest", help="Quantize segment durations to frame grid")
     args = p.parse_args(argv)
 
-    # Apply preset defaults early
+    # Apply preset defaults early (without clobbering explicit overrides)
     if args.preset == "music-video":
-        # Only override if user left defaults
-        if args.align == "midpoint":
-            pass
-        else:
-            args.align = "midpoint"
-        if args.xfade == 0.6:
-            pass
-        else:
-            args.xfade = float(args.xfade)
-        if args.phase == -0.03:
-            pass
-        else:
-            args.phase = float(args.phase)
-        if args.period == [5.0, 10.0]:
-            args.period = [5.0, 10.0]
-        if args.target == 7.5:
-            args.target = 7.5
+        # Sensible defaults
+        preset_align = "midpoint"
+        preset_xfade = 0.6
+        preset_phase = -0.03
+        preset_period = [5.0, 10.0]
+        preset_target = 7.5
+
+        # Only set when user didn't deviate from parser defaults
+        args.align = args.align if args.align != "midpoint" else preset_align
+        args.xfade = float(args.xfade) if args.xfade != 0.6 else preset_xfade
+        args.phase = float(args.phase) if args.phase != -0.03 else preset_phase
+        args.period = args.period if list(args.period) != [5.0, 10.0] else preset_period
+        args.target = float(args.target) if args.target != 7.5 else preset_target
+
+        # Ensure min-gap is safe for the chosen xfade (>= 2*xfade + 0.05)
+        try:
+            args.min_gap = max(float(args.min_gap), 2.0 * float(args.xfade) + 0.05)
+        except Exception:
+            args.min_gap = 2.0 * float(args.xfade) + 0.05
 
     beats = detect_beats(args.audio)
     if not beats:
@@ -160,6 +163,7 @@ def main(argv: List[str]) -> int:
             images,
             durations,
             out_file,
+            quantize=args.frame_quantize,
             visualize_cuts=args.debug,
             beat_markers=beat_markers,
             pulse_beats=pulse_beats,
@@ -183,6 +187,7 @@ def main(argv: List[str]) -> int:
             images,
             durations,
             out_file,
+            quantize=args.frame_quantize,
             transition_type=args.transition,
             transition_duration=float(args.xfade),
             align=args.align,
@@ -200,6 +205,9 @@ def main(argv: List[str]) -> int:
             overlay_phase=float(args.overlay_phase),
             overlay_guard_seconds=float(args.overlay_guard),
             mark_cuts=bool(args.cut_markers),
+            counter_beats=beats if args.counter else None,
+            counter_fontsize=int(args.counter_size),
+            counter_position=str(args.counter_pos),
         )
     if not ok:
         return 4

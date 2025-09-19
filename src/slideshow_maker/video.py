@@ -52,6 +52,7 @@ def create_slideshow_with_durations(
     height=DEFAULT_HEIGHT,
     fps=DEFAULT_FPS,
     temp_dir=None,
+    quantize: str = "nearest",
     visualize_cuts: bool = False,
     marker_duration: float = 0.12,
     beat_markers=None,
@@ -91,7 +92,12 @@ def create_slideshow_with_durations(
     elapsed = 0.0
     for i, (img, dur) in enumerate(zip(images, durations)):
         # Quantize duration to exact frame count to keep cuts on frame boundaries
-        frames = max(1, int(round(float(dur) * fps)))
+        if quantize == "floor":
+            frames = max(1, int(float(dur) * fps))
+        elif quantize == "ceil":
+            frames = max(1, int((float(dur) * fps) + 0.999999))
+        else:
+            frames = max(1, int(round(float(dur) * fps)))
         dur = max(1.0 / fps, frames / float(fps))
 
         clip_path = f"{temp_dir}/clip_{i:04d}.mp4"
@@ -261,6 +267,7 @@ def create_beat_aligned_with_transitions(
     width=DEFAULT_WIDTH,
     height=DEFAULT_HEIGHT,
     fps=DEFAULT_FPS,
+    quantize: str = "nearest",
     transition_type: str = "fade",
     transition_duration: float = DEFAULT_TRANSITION_DURATION,
     align: str = "midpoint",
@@ -280,6 +287,10 @@ def create_beat_aligned_with_transitions(
     overlay_phase: float = 0.0,
     overlay_guard_seconds: float = 0.0,
     mark_cuts: bool = False,
+    # numeric counter overlay
+    counter_beats=None,
+    counter_fontsize: int = 36,
+    counter_position: str = "tr",
 ):
     """Create a slideshow with xfade transitions aligned to beat-planned segment durations.
 
@@ -293,6 +304,17 @@ def create_beat_aligned_with_transitions(
     count = min(len(images), len(durations))
     images = images[:count]
     durations = [max(0.1, float(d)) for d in durations[:count]]
+    # Quantize durations to exact frame boundaries for precise cut alignment
+    q_durations = []
+    for d in durations:
+        if quantize == "floor":
+            frames = max(1, int(float(d) * fps))
+        elif quantize == "ceil":
+            frames = max(1, int((float(d) * fps) + 0.999999))
+        else:
+            frames = max(1, int(round(float(d) * fps)))
+        q_durations.append(max(1.0 / fps, frames / float(fps)))
+    durations = q_durations
 
     # Safety check: if any pair too short for xfade with reasonable effect, fallback
     too_short = False
@@ -363,7 +385,7 @@ def create_beat_aligned_with_transitions(
     else:
         overlay_times = list(transition_times)
 
-    # Optional overlays (ticks/pulses) after the xfade chain
+    # Optional overlays (ticks/pulses/counter) after the xfade chain
     final_label = last_label
     overlay_chain_parts = []
     if overlay_times:
@@ -400,6 +422,44 @@ def create_beat_aligned_with_transitions(
                 overlay_chain_parts.append(
                     f"gblur=sigma={float(bloom_sigma):.2f}:steps=1:enable='between(t,{tt:.3f},{(tt+bloom_duration):.3f})'"
                 )
+
+        # Sticky numeric beat counter (absolute timeline)
+        if counter_beats and counter_fontsize > 0:
+            try:
+                # Position presets
+                if counter_position == "tr":
+                    x_expr = "w-tw-20"; y_expr = "20"
+                elif counter_position == "tl":
+                    x_expr = "20"; y_expr = "20"
+                elif counter_position == "br":
+                    x_expr = "w-tw-20"; y_expr = "h-th-20"
+                else:
+                    x_expr = "20"; y_expr = "h-th-20"
+
+                numbered_beats = sorted([t for t in overlay_times if t >= 0.0])
+                total_length = prev_duration
+
+                if numbered_beats:
+                    first_bt = max(0.0, numbered_beats[0])
+                    if first_bt > 0:
+                        overlay_chain_parts.append(
+                            "drawtext=fontfile='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'"
+                            f":text='0':x={x_expr}:y={y_expr}:fontsize={int(counter_fontsize)}:fontcolor=white:"
+                            f"bordercolor=black:borderw=2:enable='between(t,0,{first_bt:.3f})'"
+                        )
+
+                for j, bt in enumerate(numbered_beats):
+                    start_t = max(0.0, bt)
+                    end_t = total_length if j + 1 >= len(numbered_beats) else max(0.0, numbered_beats[j + 1])
+                    label = j + 1
+                    overlay_chain_parts.append(
+                        "drawtext=fontfile='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'"
+                        f":text='{label}':x={x_expr}:y={y_expr}:fontsize={int(counter_fontsize)}:fontcolor=white:"
+                        f"bordercolor=black:borderw=2:enable='between(t,{start_t:.3f},{end_t:.3f})'"
+                    )
+            except Exception:
+                pass
+
         if overlay_chain_parts:
             overlay_chain = ','.join(overlay_chain_parts)
             out_overlay_label = 'vo'
