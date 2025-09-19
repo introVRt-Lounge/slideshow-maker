@@ -60,6 +60,9 @@ def main(argv: List[str]) -> int:
     p.add_argument("--frame-quantize", type=str, choices=["nearest","floor","ceil"], default="nearest", help="Quantize segment durations to frame grid")
     p.add_argument("--plan-out", type=str, default=None, help="Write planning JSON to this path")
     p.add_argument("--plan-in", type=str, default=None, help="Read planning JSON and render from it (skips detection/selection)")
+    p.add_argument("--xfade-min", type=float, default=0.25, help="Minimum effective xfade seconds; shorter boundaries hardcut")
+    p.add_argument("--fallback-style", type=str, choices=["none","pulse","bloom","whitepop","blackflash"], default="none", help="Effect to apply on too-short boundaries")
+    p.add_argument("--fallback-dur", type=float, default=0.06, help="Duration of per-boundary fallback effect")
     args = p.parse_args(argv)
 
     # Apply preset defaults early (without clobbering explicit overrides)
@@ -281,6 +284,7 @@ def main(argv: List[str]) -> int:
             quantize=args.frame_quantize,
             transition_type=args.transition,
             transition_duration=float(args.xfade),
+            min_effective=float(args.xfade_min),
             align=args.align,
             mark_transitions=bool(args.debug or args.mark_beats),
             marker_duration=0.12,
@@ -296,6 +300,8 @@ def main(argv: List[str]) -> int:
             overlay_phase=float(args.overlay_phase),
             overlay_guard_seconds=float(args.overlay_guard),
             mark_cuts=bool(args.cut_markers),
+            fallback_style=str(args.fallback_style),
+            fallback_duration=float(args.fallback_dur),
             counter_beats=beats if args.counter else None,
             counter_fontsize=int(args.counter_size),
             counter_position=str(args.counter_pos),

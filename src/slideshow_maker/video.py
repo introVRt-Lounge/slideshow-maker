@@ -292,6 +292,9 @@ def create_beat_aligned_with_transitions(
     counter_beats=None,
     counter_fontsize: int = 36,
     counter_position: str = "tr",
+    # per-boundary fallback styling
+    fallback_style: str = "none",
+    fallback_duration: float = 0.06,
 ):
     """Create a slideshow with xfade transitions aligned to beat-planned segment durations.
 
@@ -337,6 +340,19 @@ def create_beat_aligned_with_transitions(
             fps=fps,
         )
 
+    # Guard against pathological memory/arg size with extremely many segments
+    # For very high segment counts, prefer hardcuts for stability
+    if count > 120:
+        print(f"⚠️ Too many segments for a single-pass xfade chain ({count}); falling back to hard cuts for stability.")
+        return create_slideshow_with_durations(
+            images,
+            durations,
+            output_file,
+            width=width,
+            height=height,
+            fps=fps,
+        )
+
     # Build ffmpeg inputs: looped stills with explicit -t
     input_args = []
     for img, d in zip(images, durations):
@@ -360,13 +376,29 @@ def create_beat_aligned_with_transitions(
         curr_d = durations[i]
         td_eff = min(max(0.05, transition_duration), max(0.05, prev_duration - 0.05), max(0.05, curr_d - 0.05))
         if td_eff < min_effective:
-            # Per-segment fallback: no xfade, concatenate next stream directly
+            # Per-segment fallback: hardcut concat with optional micro-effect at boundary
             out_label = f'v{i}'
+            boundary_t = prev_duration
+            if fallback_style != "none" and fallback_duration > 0:
+                # Build a tiny overlay chain on last_label before concat
+                eff = None
+                if fallback_style == "whitepop":
+                    eff = f"drawbox=x=0:y=0:w=iw:h=ih:color=white@1.0:t=fill:enable='between(t,{boundary_t:.3f},{(boundary_t+fallback_duration):.3f})'"
+                elif fallback_style == "blackflash":
+                    eff = f"drawbox=x=0:y=0:w=iw:h=ih:color=black@1.0:t=fill:enable='between(t,{boundary_t:.3f},{(boundary_t+fallback_duration):.3f})'"
+                elif fallback_style == "pulse":
+                    eff = f"eq=saturation={float(pulse_saturation):.3f}:brightness={float(pulse_brightness):.3f}:enable='between(t,{boundary_t:.3f},{(boundary_t+fallback_duration):.3f})'"
+                elif fallback_style == "bloom":
+                    eff = f"gblur=sigma={float(bloom_sigma):.2f}:steps=1:enable='between(t,{boundary_t:.3f},{(boundary_t+fallback_duration):.3f})'"
+                if eff:
+                    styled_label = f'sty{i}'
+                    filters.append(f'[{last_label}]{eff}[{styled_label}]')
+                    last_label = styled_label
+
             filters.append(f'[{last_label}][s{i}]concat=n=2:v=1:a=0[{out_label}]')
-            # Landing time is still the boundary between segments
-            transition_times.append(prev_duration)
+            transition_times.append(boundary_t)
             last_label = out_label
-            prev_duration = prev_duration + curr_d  # no shortening by xfade
+            prev_duration = prev_duration + curr_d
         else:
             if align == "midpoint":
                 offset = max(0.0, prev_duration - (td_eff / 2.0))
