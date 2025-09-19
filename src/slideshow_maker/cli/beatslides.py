@@ -24,7 +24,7 @@ from ..utils import get_audio_duration
 
 def main(argv: List[str]) -> int:
     p = argparse.ArgumentParser(description="Beat-aligned planning (Phase 2 minimal)")
-    p.add_argument("audio", help="Path to audio file")
+    p.add_argument("audio", help="Path to audio file, a directory of audio files, or 'auto' to use images_dir audio")
     p.add_argument("images_dir", help="Directory of images")
     p.add_argument("--period", nargs=2, type=float, metavar=("MIN", "MAX"), default=[5.0, 10.0])
     p.add_argument("--target", type=float, default=7.5)
@@ -64,6 +64,7 @@ def main(argv: List[str]) -> int:
     p.add_argument("--fallback-style", type=str, choices=["none","pulse","bloom","whitepop","blackflash"], default="none", help="Effect to apply on too-short boundaries")
     p.add_argument("--fallback-dur", type=float, default=0.06, help="Duration of per-boundary fallback effect")
     p.add_argument("--mask-scope", type=str, choices=["none","foreground","background"], default="none", help="Restrict pulse/bloom to foreground or background using rembg mask")
+    p.add_argument("--per-audio", action="store_true", default=False, help="Render one video per audio file (when audio is a dir or 'auto')")
     args = p.parse_args(argv)
 
     # Apply preset defaults early (without clobbering explicit overrides)
@@ -163,48 +164,44 @@ def main(argv: List[str]) -> int:
             print(f"Failed to read plan JSON: {e}", file=sys.stderr)
             return 10
 
-    if plan is not None:
-        beats = plan.get("beats", [])
-        cuts = plan.get("cuts", [])
-        durations = plan.get("durations", [])
-        if args.debug:
-            print(f"Loaded plan: beats={len(beats)} cuts={len(cuts)} durations={len(durations)}")
-    else:
-        beats = detect_beats(args.audio)
-        if not beats:
-            print("No beats detected", file=sys.stderr)
-            return 1
-
-        if args.debug:
-            print(f"Detected beats ({len(beats)}):")
-            print(", ".join(f"{b:.3f}" for b in beats[:50]) + ("..." if len(beats) > 50 else ""))
-
-        if args.audio_end is None:
-            # Use true audio duration when available; fallback to last beat + target
-            audio_end = get_audio_duration(args.audio) or (beats[-1] + args.target)
+    def _render_for_audio(one_audio_path: str) -> int:
+        nonlocal args, plan
+        if plan is not None:
+            beats = plan.get("beats", [])
+            cuts = plan.get("cuts", [])
+            durations = plan.get("durations", [])
+            if args.debug:
+                print(f"Loaded plan: beats={len(beats)} cuts={len(cuts)} durations={len(durations)}")
         else:
-            audio_end = float(args.audio_end)
-        # If you want a short preview, use --max-seconds. Omit it for full video
-        if args.max_seconds is not None:
-            audio_end = min(audio_end, float(args.max_seconds))
-
-        period_min, period_max = float(args.period[0]), float(args.period[1])
-        if args.all_beats:
-            # Use every beat from the first beat onward up to audio_end
-            cuts = [b for b in beats if b <= audio_end]
-        else:
-            cuts = select_beats(
-                beats,
-                audio_end=audio_end,
-                period_min=period_min,
-                period_max=period_max,
-                target_period=args.target,
-                strict=bool(args.strict),
-                grace=float(args.grace),
-                min_cut_gap=float(args.min_gap),
-                phase=float(args.phase),
-                strategy="nearest",
-            )
+            beats = detect_beats(one_audio_path)
+            if not beats:
+                print("No beats detected", file=sys.stderr)
+                return 1
+            if args.debug:
+                print(f"Detected beats ({len(beats)}):")
+                print(", ".join(f"{b:.3f}" for b in beats[:50]) + ("..." if len(beats) > 50 else ""))
+            if args.audio_end is None:
+                audio_end = get_audio_duration(one_audio_path) or (beats[-1] + args.target)
+            else:
+                audio_end = float(args.audio_end)
+            if args.max_seconds is not None:
+                audio_end = min(audio_end, float(args.max_seconds))
+            period_min, period_max = float(args.period[0]), float(args.period[1])
+            if args.all_beats:
+                cuts = [b for b in beats if b <= audio_end]
+            else:
+                cuts = select_beats(
+                    beats,
+                    audio_end=audio_end,
+                    period_min=period_min,
+                    period_max=period_max,
+                    target_period=args.target,
+                    strict=bool(args.strict),
+                    grace=float(args.grace),
+                    min_cut_gap=float(args.min_gap),
+                    phase=float(args.phase),
+                    strategy="nearest",
+                )
 
     # Compute durations from cuts relative to start
     if not cuts:
@@ -250,7 +247,7 @@ def main(argv: List[str]) -> int:
     else:
         images = images[: len(durations)]
 
-    out_file = "beat_aligned.mp4"
+        out_file = "beat_aligned.mp4"
     if args.hardcuts:
         beat_markers = beats if args.mark_beats else None
         pulse_beats = beats if args.pulse else None
@@ -309,9 +306,9 @@ def main(argv: List[str]) -> int:
             counter_position=str(args.counter_pos),
             mask_scope=str(args.mask_scope),
         )
-    if not ok:
-        return 4
-    print(f"✅ Created {out_file} with {len(images)} images and {len(durations)} segments")
+        if not ok:
+            return 4
+        print(f"✅ Created {out_file} with {len(images)} images and {len(durations)} segments")
 
     # Write planning JSON if requested
     if args.plan_out:
@@ -342,17 +339,52 @@ def main(argv: List[str]) -> int:
         except Exception as e:
             print(f"Warning: failed to write plan JSON: {e}", file=sys.stderr)
 
-    if not args.no_audio:
-        # First ensure we have an AAC audio file to mux (MP3-in-MP4 can be flaky)
-        if not audio_mod.merge_audio([args.audio], AUDIO_OUTPUT):
-            print("Warning: failed to prepare audio track; leaving video without audio", file=sys.stderr)
-            return 0
-        final_with_audio = "beat_aligned_with_audio.mp4"
-        if not audio_mod.combine_video_audio(out_file, AUDIO_OUTPUT, final_with_audio):
-            print("Warning: failed to mux audio; leaving video without audio", file=sys.stderr)
-            return 0
-        print(f"🎵 Muxed audio -> {final_with_audio}")
-    return 0
+        if not args.no_audio:
+            if not audio_mod.merge_audio([one_audio_path], AUDIO_OUTPUT):
+                print("Warning: failed to prepare audio track; leaving video without audio", file=sys.stderr)
+                return 0
+            final_with_audio = "beat_aligned_with_audio.mp4"
+            if not audio_mod.combine_video_audio(out_file, AUDIO_OUTPUT, final_with_audio):
+                print("Warning: failed to mux audio; leaving video without audio", file=sys.stderr)
+                return 0
+            print(f"🎵 Muxed audio -> {final_with_audio}")
+        return 0
+
+    # Harmonized default: 'auto' or directory means merge all audio in images_dir; optional --per-audio
+    audio_arg = args.audio
+    if audio_arg.lower() == 'auto' or os.path.isdir(audio_arg):
+        source_dir = args.images_dir if audio_arg.lower() == 'auto' else audio_arg
+        audio_files = audio_mod.find_audio_files(source_dir)
+        if not audio_files:
+            print("No audio files found", file=sys.stderr)
+            return 5
+        if args.per_audio:
+            rc = 0
+            for a in audio_files:
+                code = _render_for_audio(a)
+                if code != 0:
+                    rc = code
+                else:
+                    base = os.path.splitext(os.path.basename(a))[0]
+                    try:
+                        os.rename("beat_aligned_with_audio.mp4", f"{base}_beat.mp4")
+                    except Exception:
+                        pass
+            return rc
+        else:
+            if not audio_mod.merge_audio(audio_files, AUDIO_OUTPUT):
+                print("Failed to merge audio", file=sys.stderr)
+                return 6
+            code = _render_for_audio(AUDIO_OUTPUT)
+            if code == 0:
+                try:
+                    os.rename("beat_aligned_with_audio.mp4", "beat_aligned_merged.mp4")
+                except Exception:
+                    pass
+            return code
+    else:
+        # Single file path
+        return _render_for_audio(audio_arg)
 
 
 if __name__ == "__main__":  # pragma: no cover

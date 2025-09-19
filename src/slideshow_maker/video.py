@@ -738,8 +738,8 @@ def create_beat_aligned_with_transitions(
                     f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=red@1.0:t=fill:enable='between(t,{tt:.3f},{(tt+marker_duration):.3f})'"
                 )
 
-        # Beat tick markers (white), drawn after to appear on top
-        if (mark_transitions or overlay_beats) and marker_duration > 0:
+        # Beat tick markers (white), only when explicitly requested
+        if mark_transitions and marker_duration > 0:
             for tt in overlay_times:
                 draw_parts.append(
                     f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=white@1.0:t=fill:enable='between(t,{tt:.3f},{(tt+marker_duration):.3f})'"

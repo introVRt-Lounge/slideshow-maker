@@ -100,7 +100,13 @@ def create_slideshow_chunked(images: List[str], output_file: str, min_duration: 
             vf_filter = f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2"
             encoding_params = get_encoding_params(nvenc_available, fps)
             cmd = f'ffmpeg -y -loop 1 -i "{img}" -t {duration:.1f} -vf "{vf_filter}" {encoding_params} "{temp_clip}"'
-            if not run_command(cmd, f"    Creating image {i+1}/{len(chunk)}", show_output=False, timeout_seconds=30):
+            ok = run_command(cmd, f"    Creating image {i+1}/{len(chunk)}", show_output=False, timeout_seconds=30)
+            if not ok and nvenc_available:
+                # Retry once with CPU encoding fallback
+                cpu_params = get_encoding_params(False, fps)
+                cpu_cmd = f'ffmpeg -y -loop 1 -i "{img}" -t {duration:.1f} -vf "{vf_filter}" {cpu_params} "{temp_clip}"'
+                ok = run_command(cpu_cmd, f"    Creating image {i+1}/{len(chunk)} (CPU fallback)", show_output=False, timeout_seconds=30)
+            if not ok:
                 print(f"    ⚠️  Skipping problematic image: {os.path.basename(img)}")
                 continue
             temp_clips.append(temp_clip)
@@ -131,7 +137,8 @@ def create_slideshow_chunked(images: List[str], output_file: str, min_duration: 
                         cmd = f'ffmpeg -y -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v][1:v]xfade=transition={transition_type}:duration={DEFAULT_TRANSITION_DURATION}:offset={duration-DEFAULT_TRANSITION_DURATION:.1f}" {encoding_params} -t {duration:.1f} "{transition_file}"'
 
                     print(f"      🔄 {transition_type.upper()} transition command: {cmd}")
-                    if run_command(cmd, f"    {transition_type.upper()} transition {j}/{len(temp_clips)-1}", show_output=True):
+                    ok_t = run_command(cmd, f"    {transition_type.upper()} transition {j}/{len(temp_clips)-1}", show_output=True)
+                    if ok_t:
                         transition_clips.append(transition_file)
                         print(f"      ✅ {transition_type.upper()} transition {j} SUCCESS")
                     else:
@@ -139,7 +146,13 @@ def create_slideshow_chunked(images: List[str], output_file: str, min_duration: 
                             print(f"      ⚠️ OpenCL transition failed, trying CPU fallback...")
                             encoding_params = get_encoding_params(nvenc_available, fps)
                             cpu_cmd = f'ffmpeg -y -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v][1:v]xfade=transition={transition_type}:duration={DEFAULT_TRANSITION_DURATION}:offset={duration-DEFAULT_TRANSITION_DURATION:.1f}" {encoding_params} -t {duration:.1f} "{transition_file}"'
-                            if run_command(cpu_cmd, f"    CPU fallback {transition_type.upper()} transition {j}/{len(temp_clips)-1}", show_output=True):
+                            ok_cpu = run_command(cpu_cmd, f"    CPU fallback {transition_type.upper()} transition {j}/{len(temp_clips)-1}", show_output=True)
+                            if not ok_cpu and nvenc_available:
+                                # Try forced libx264 if NVENC path in encoding_params failed
+                                cpu_params2 = get_encoding_params(False, fps)
+                                cpu_cmd2 = f'ffmpeg -y -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v][1:v]xfade=transition={transition_type}:duration={DEFAULT_TRANSITION_DURATION}:offset={duration-DEFAULT_TRANSITION_DURATION:.1f}" {cpu_params2} -t {duration:.1f} "{transition_file}"'
+                                ok_cpu = run_command(cpu_cmd2, f"    CPU fallback-2 {transition_type.upper()} transition {j}/{len(temp_clips)-1}", show_output=True)
+                            if ok_cpu:
                                 transition_clips.append(transition_file)
                                 print(f"      ✅ CPU fallback {transition_type.upper()} transition {j} SUCCESS")
                             else:
