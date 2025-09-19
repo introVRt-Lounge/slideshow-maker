@@ -65,7 +65,7 @@ def combine_video_audio(video_file, audio_file, output_file):
         f'-c:v libx264 -r 25 -crf 23 -preset ultrafast -pix_fmt yuv420p '
         f'-c:a copy -shortest "{output_file}"'
     )
-    return run_command(cmd, f"Combining video and audio (duration: {audio_duration:.1f}s)")
+    return run_command(cmd, f"Combining video and audio (duration: {audio_duration:.1f}s)", timeout_seconds=600)
 
 
 def get_total_audio_duration(audio_files):
