@@ -202,142 +202,141 @@ def main(argv: List[str]) -> int:
                     phase=float(args.phase),
                     strategy="nearest",
                 )
+        # Compute durations from cuts relative to start
+        if not cuts:
+            print("No cuts selected", file=sys.stderr)
+            return 2
 
-    # Compute durations from cuts relative to start
-    if not cuts:
-        print("No cuts selected", file=sys.stderr)
-        return 2
+        if args.debug:
+            print(f"Selected cuts ({len(cuts)}):")
+            print(", ".join(f"{c:.3f}" for c in cuts[:50]) + ("..." if len(cuts) > 50 else ""))
 
-    if args.debug:
-        print(f"Selected cuts ({len(cuts)}):")
-        print(", ".join(f"{c:.3f}" for c in cuts[:50]) + ("..." if len(cuts) > 50 else ""))
+        # Build absolute segment durations from t=0 to each cut unless plan provides them
+        if not plan or not durations:
+            durations = []
+            if cuts:
+                last = 0.0
+                for c in cuts:
+                    if c <= last:
+                        continue
+                    durations.append(max(0.05, c - last))
+                    last = c
+                # Add a short tail (half target) to close the video
+                durations.append(max(0.2, args.target * 0.5))
 
-    # Build absolute segment durations from t=0 to each cut unless plan provides them
-    if not plan or not durations:
-        durations = []
-        if cuts:
-            last = 0.0
-            for c in cuts:
-                if c <= last:
-                    continue
-                durations.append(max(0.05, c - last))
-                last = c
-            # Add a short tail (half target) to close the video
-            durations.append(max(0.2, args.target * 0.5))
+        # Map images
+        import glob
+        exts = ["*.png", "*.jpg", "*.jpeg"]
+        images = []
+        plan_images = (plan.get("images") if plan else None) or []
+        if plan_images:
+            images = [p for p in plan_images if os.path.exists(p)]
+        if not images:
+            for e in exts:
+                images.extend(glob.glob(os.path.join(args.images_dir, e)))
+            images = sorted(images)
+        if not images:
+            print("No images found", file=sys.stderr)
+            return 3
 
-    # Map images
-    import glob
-    exts = ["*.png", "*.jpg", "*.jpeg"]
-    images = []
-    plan_images = (plan.get("images") if plan else None) or []
-    if plan_images:
-        images = [p for p in plan_images if os.path.exists(p)]
-    if not images:
-        for e in exts:
-            images.extend(glob.glob(os.path.join(args.images_dir, e)))
-        images = sorted(images)
-    if not images:
-        print("No images found", file=sys.stderr)
-        return 3
-
-    # Loop images if fewer than segments
-    if len(images) < len(durations):
-        reps = (len(durations) + len(images) - 1) // len(images)
-        images = (images * reps)[: len(durations)]
-    else:
-        images = images[: len(durations)]
+        # Loop images if fewer than segments
+        if len(images) < len(durations):
+            reps = (len(durations) + len(images) - 1) // len(images)
+            images = (images * reps)[: len(durations)]
+        else:
+            images = images[: len(durations)]
 
         out_file = "beat_aligned.mp4"
-    if args.hardcuts:
-        beat_markers = beats if args.mark_beats else None
-        pulse_beats = beats if args.pulse else None
-        ok = create_slideshow_with_durations(
-            images,
-            durations,
-            out_file,
-            quantize=args.frame_quantize,
-            visualize_cuts=args.debug,
-            beat_markers=beat_markers,
-            pulse_beats=pulse_beats,
-            pulse_duration=float(args.pulse_dur),
-            pulse_saturation=float(args.pulse_sat),
-            pulse_brightness=float(args.pulse_bright),
-            pulse_bloom=bool(args.bloom),
-            pulse_bloom_sigma=float(args.bloom_sigma),
-            pulse_bloom_duration=float(args.bloom_dur),
-            counter_beats=beats if args.counter else None,
-            counter_fontsize=int(args.counter_size),
-            counter_position=str(args.counter_pos),
-            mask_scope=str(args.mask_scope),
-        )
-    else:
-        try:
-            from ..video import create_beat_aligned_with_transitions
-        except Exception as e:
-            print(f"Transitions renderer unavailable: {e}", file=sys.stderr)
-            return 4
-        ok = create_beat_aligned_with_transitions(
-            images,
-            durations,
-            out_file,
-            quantize=args.frame_quantize,
-            transition_type=args.transition,
-            transition_duration=float(args.xfade),
-            min_effective=float(args.xfade_min),
-            align=args.align,
-            mark_transitions=bool(args.debug or args.mark_beats),
-            marker_duration=0.12,
-            pulse=bool(args.pulse),
-            pulse_duration=float(args.pulse_dur),
-            pulse_saturation=float(args.pulse_sat),
-            pulse_brightness=float(args.pulse_bright),
-            bloom=bool(args.bloom),
-            bloom_sigma=float(args.bloom_sigma),
-            bloom_duration=float(args.bloom_dur),
-            overlay_beats=beats,
-            overlay_beat_multiplier=int(args.beat_mult),
-            overlay_phase=float(args.overlay_phase),
-            overlay_guard_seconds=float(args.overlay_guard),
-            mark_cuts=bool(args.cut_markers),
-            fallback_style=str(args.fallback_style),
-            fallback_duration=float(args.fallback_dur),
-            counter_beats=beats if args.counter else None,
-            counter_fontsize=int(args.counter_size),
-            counter_position=str(args.counter_pos),
-            mask_scope=str(args.mask_scope),
-        )
-        if not ok:
-            return 4
-        print(f"✅ Created {out_file} with {len(images)} images and {len(durations)} segments")
+        if args.hardcuts:
+            beat_markers = beats if args.mark_beats else None
+            pulse_beats = beats if args.pulse else None
+            ok = create_slideshow_with_durations(
+                images,
+                durations,
+                out_file,
+                quantize=args.frame_quantize,
+                visualize_cuts=args.debug,
+                beat_markers=beat_markers,
+                pulse_beats=pulse_beats,
+                pulse_duration=float(args.pulse_dur),
+                pulse_saturation=float(args.pulse_sat),
+                pulse_brightness=float(args.pulse_bright),
+                pulse_bloom=bool(args.bloom),
+                pulse_bloom_sigma=float(args.bloom_sigma),
+                pulse_bloom_duration=float(args.bloom_dur),
+                counter_beats=beats if args.counter else None,
+                counter_fontsize=int(args.counter_size),
+                counter_position=str(args.counter_pos),
+                mask_scope=str(args.mask_scope),
+            )
+        else:
+            try:
+                from ..video import create_beat_aligned_with_transitions
+            except Exception as e:
+                print(f"Transitions renderer unavailable: {e}", file=sys.stderr)
+                return 4
+            ok = create_beat_aligned_with_transitions(
+                images,
+                durations,
+                out_file,
+                quantize=args.frame_quantize,
+                transition_type=args.transition,
+                transition_duration=float(args.xfade),
+                min_effective=float(args.xfade_min),
+                align=args.align,
+                mark_transitions=bool(args.debug or args.mark_beats),
+                marker_duration=0.12,
+                pulse=bool(args.pulse),
+                pulse_duration=float(args.pulse_dur),
+                pulse_saturation=float(args.pulse_sat),
+                pulse_brightness=float(args.pulse_bright),
+                bloom=bool(args.bloom),
+                bloom_sigma=float(args.bloom_sigma),
+                bloom_duration=float(args.bloom_dur),
+                overlay_beats=beats,
+                overlay_beat_multiplier=int(args.beat_mult),
+                overlay_phase=float(args.overlay_phase),
+                overlay_guard_seconds=float(args.overlay_guard),
+                mark_cuts=bool(args.cut_markers),
+                fallback_style=str(args.fallback_style),
+                fallback_duration=float(args.fallback_dur),
+                counter_beats=beats if args.counter else None,
+                counter_fontsize=int(args.counter_size),
+                counter_position=str(args.counter_pos),
+                mask_scope=str(args.mask_scope),
+            )
+            if not ok:
+                return 4
+            print(f"✅ Created {out_file} with {len(images)} images and {len(durations)} segments")
 
-    # Write planning JSON if requested
-    if args.plan_out:
-        try:
-            plan_payload = {
-                "audio": args.audio,
-                "images_dir": args.images_dir,
-                "images": images,
-                "beats": beats,
-                "cuts": cuts,
-                "durations": durations,
-                "params": {
-                    "align": args.align,
-                    "xfade": float(args.xfade),
-                    "phase": float(args.phase),
-                    "period": [float(args.period[0]), float(args.period[1])],
-                    "target": float(args.target),
-                    "grace": float(args.grace),
-                    "min_gap": float(args.min_gap),
-                    "hardcuts": bool(args.hardcuts),
-                    "transition": args.transition,
-                    "quantize": args.frame_quantize,
-                },
-            }
-            with open(args.plan_out, "w") as f:
-                json.dump(plan_payload, f, indent=2)
-            print(f"📝 Wrote plan JSON -> {args.plan_out}")
-        except Exception as e:
-            print(f"Warning: failed to write plan JSON: {e}", file=sys.stderr)
+        # Write planning JSON if requested
+        if args.plan_out:
+            try:
+                plan_payload = {
+                    "audio": args.audio,
+                    "images_dir": args.images_dir,
+                    "images": images,
+                    "beats": beats,
+                    "cuts": cuts,
+                    "durations": durations,
+                    "params": {
+                        "align": args.align,
+                        "xfade": float(args.xfade),
+                        "phase": float(args.phase),
+                        "period": [float(args.period[0]), float(args.period[1])],
+                        "target": float(args.target),
+                        "grace": float(args.grace),
+                        "min_gap": float(args.min_gap),
+                        "hardcuts": bool(args.hardcuts),
+                        "transition": args.transition,
+                        "quantize": args.frame_quantize,
+                    },
+                }
+                with open(args.plan_out, "w") as f:
+                    json.dump(plan_payload, f, indent=2)
+                print(f"📝 Wrote plan JSON -> {args.plan_out}")
+            except Exception as e:
+                print(f"Warning: failed to write plan JSON: {e}", file=sys.stderr)
 
         if not args.no_audio:
             if not audio_mod.merge_audio([one_audio_path], AUDIO_OUTPUT):
