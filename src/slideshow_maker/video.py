@@ -68,6 +68,7 @@ def create_slideshow_with_durations(
     counter_fontsize: int = 36,
     counter_position: str = "tr",
     cut_markers=None,
+    mask_scope: str = "none",
 ):
     """Create a slideshow where each image uses an explicit duration (no transitions).
 
@@ -89,6 +90,27 @@ def create_slideshow_with_durations(
 
     temp_clips = []
     print(f"🎬 Creating fixed-duration clips for {count} images...")
+
+    # Optional foreground/background masks via rembg
+    masks: list[str] = []
+    use_masks = False
+    if mask_scope in ("foreground", "background"):
+        import os as _os
+        if not _os.environ.get("PYTEST_CURRENT_TEST"):
+            try:
+                # Lazy import to avoid hard dep during tests
+                from .background_removal import BackgroundRemover  # type: ignore
+                remover = BackgroundRemover()
+                if remover.is_available():
+                    for img in images:
+                        m = remover.create_mask(img, None)
+                        masks.append(m)
+                    if all(bool(m) for m in masks) and len(masks) == len(images):
+                        use_masks = True
+                else:
+                    use_masks = False
+            except Exception:
+                use_masks = False
 
     elapsed = 0.0
     for i, (img, dur) in enumerate(zip(images, durations)):
@@ -232,11 +254,168 @@ def create_slideshow_with_durations(
             except Exception:
                 pass
 
-        vf_filter = ",".join(vf_parts)
-        cmd = (
-            f'ffmpeg -y -loop 1 -i "{img}" -t {float(dur):.3f} '
-            f'-vf "{vf_filter}" -frames:v {frames} -c:v libx264 -r {fps} "{clip_path}"'
-        )
+        if use_masks and masks[i]:
+            # Build effect chain (pulse/bloom) and post overlays (markers/counter) with masked merge
+            pre_chain = [
+                f"scale={width}:{height}:force_original_aspect_ratio=decrease",
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
+                "format=yuv420p",
+            ]
+
+            # Build effect-only chain on a split branch
+            effect_chain_parts = []
+            # Pulse
+            if pulse_beats and pulse_duration > 0 and (pulse_saturation > 1.0 or pulse_brightness != 0.0):
+                try:
+                    for bt in pulse_beats:
+                        if bt < elapsed:
+                            continue
+                        if bt >= elapsed + dur:
+                            break
+                        rel_t = max(0.0, bt - elapsed)
+                        effect_chain_parts.append(
+                            f"eq=saturation={float(pulse_saturation):.3f}:brightness={float(pulse_brightness):.3f}:enable='between(t,{rel_t:.3f},{(rel_t+pulse_duration):.3f})'"
+                        )
+                except Exception:
+                    pass
+            # Bloom
+            if pulse_bloom and pulse_bloom_duration > 0 and pulse_bloom_sigma > 0:
+                try:
+                    beats_for_bloom = pulse_beats or beat_markers or []
+                    for bt in beats_for_bloom:
+                        if bt < elapsed:
+                            continue
+                        if bt >= elapsed + dur:
+                            break
+                        rel_t = max(0.0, bt - elapsed)
+                        effect_chain_parts.append(
+                            f"gblur=sigma={float(pulse_bloom_sigma):.2f}:steps=1:enable='between(t,{rel_t:.3f},{(rel_t+pulse_bloom_duration):.3f})'"
+                        )
+                except Exception:
+                    pass
+
+            # Post overlays (markers, counter) happen after maskedmerge
+            post_chain_parts = []
+            # Debug cut marker at clip start (except first)
+            if visualize_cuts and i > 0 and marker_duration > 0:
+                post_chain_parts.append(
+                    f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=white@1.0:t=fill:enable='between(t,0,{marker_duration:.3f})'"
+                )
+            # Beat markers
+            if beat_markers:
+                try:
+                    for bt in beat_markers:
+                        if bt < elapsed:
+                            continue
+                        if bt >= elapsed + dur:
+                            break
+                        rel_t = max(0.0, bt - elapsed)
+                        post_chain_parts.append(
+                            f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=white@1.0:t=fill:enable='between(t,{rel_t:.3f},{(rel_t+marker_duration):.3f})'"
+                        )
+                except Exception:
+                    pass
+            # Selected cut markers
+            if cut_markers:
+                try:
+                    for ct in cut_markers:
+                        if ct <= elapsed:
+                            continue
+                        if ct > elapsed + dur:
+                            break
+                        rel_t = max(0.0, ct - elapsed)
+                        rel_t = min(max(0.0, rel_t - 0.02), max(0.0, dur - 0.02))
+                        post_chain_parts.append(
+                            f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=red@1.0:t=fill:enable='between(t,{rel_t:.3f},{(rel_t+marker_duration):.3f})'"
+                        )
+                except Exception:
+                    pass
+            # Sticky numeric counter
+            if counter_beats and counter_fontsize > 0:
+                try:
+                    beats_in_order = list(counter_beats)
+                    count_before = 0
+                    first_idx_in_clip = None
+                    for idx_b, b in enumerate(beats_in_order):
+                        if b < elapsed:
+                            count_before += 1
+                        else:
+                            first_idx_in_clip = idx_b
+                            break
+                    if counter_position == "tr":
+                        x_expr = "w-tw-20"; y_expr = "20"
+                    elif counter_position == "tl":
+                        x_expr = "20"; y_expr = "20"
+                    elif counter_position == "br":
+                        x_expr = "w-tw-20"; y_expr = "h-th-20"
+                    else:
+                        x_expr = "20"; y_expr = "h-th-20"
+                    first_rel = None
+                    if first_idx_in_clip is not None and first_idx_in_clip < len(beats_in_order):
+                        first_rel = max(0.0, beats_in_order[first_idx_in_clip] - elapsed)
+                    if count_before > 0 and first_rel is not None and first_rel > 0:
+                        prev_idx = count_before
+                        post_chain_parts.append(
+                            "drawtext=fontfile='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'"
+                            f":text='{prev_idx}':x={x_expr}:y={y_expr}:fontsize={int(counter_fontsize)}:fontcolor=white:"
+                            f"bordercolor=black:borderw=2:enable='between(t,0,{first_rel:.3f})'"
+                        )
+                    local_beats = []
+                    for bt in beats_in_order:
+                        if bt < elapsed:
+                            continue
+                        if bt >= elapsed + dur:
+                            break
+                        local_beats.append(bt)
+                    for j2, bt in enumerate(local_beats):
+                        rel_t = max(0.0, bt - elapsed)
+                        rel_next = dur if j2 + 1 >= len(local_beats) else max(0.0, local_beats[j2 + 1] - elapsed)
+                        idx_label = count_before + j2 + 1
+                        post_chain_parts.append(
+                            "drawtext=fontfile='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'"
+                            f":text='{idx_label}':x={x_expr}:y={y_expr}:fontsize={int(counter_fontsize)}:fontcolor=white:"
+                            f"bordercolor=black:borderw=2:enable='between(t,{rel_t:.3f},{rel_next:.3f})'"
+                        )
+                except Exception:
+                    pass
+
+            pre = ",".join(pre_chain)
+            eff = ",".join(effect_chain_parts) if effect_chain_parts else None
+            post = ",".join(post_chain_parts) if post_chain_parts else None
+
+            # Build filter_complex graph
+            # [0:v] -> pre -> split [b][e]; [e] -> eff -> [ee]
+            # mask: [1:v] -> scale/pad/gray -> [m] (invert if background)
+            # maskedmerge: [b][ee][m] -> [mm]; then apply post overlays on [mm]
+            mask_process = (
+                f"[1:v]scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,format=gray[m]"
+            )
+            if mask_scope == "background":
+                mask_process = mask_process + ",negate,format=gray[m]"
+
+            fc_parts = [
+                f"[0:v]{pre},split=2[b][e]",
+                (f"[e]{eff}[ee]" if eff else "[e]copy[ee]"),
+                mask_process,
+                "[b][ee][m]maskedmerge[mm]",
+            ]
+            if post:
+                fc_parts.append(f"[mm]{post}[vout]")
+                map_label = "[vout]"
+            else:
+                map_label = "[mm]"
+            filter_complex = ";".join(fc_parts)
+
+            cmd = (
+                f'ffmpeg -y -loop 1 -i "{img}" -loop 1 -i "{masks[i]}" -t {float(dur):.3f} '
+                f'-filter_complex "{filter_complex}" -map {map_label} -frames:v {frames} -c:v libx264 -r {fps} "{clip_path}"'
+            )
+        else:
+            vf_filter = ",".join(vf_parts)
+            cmd = (
+                f'ffmpeg -y -loop 1 -i "{img}" -t {float(dur):.3f} '
+                f'-vf "{vf_filter}" -frames:v {frames} -c:v libx264 -r {fps} "{clip_path}"'
+            )
         if not run_command(cmd, f"Clip {i+1}/{count} ({dur:.2f}s)"):
             return False
         temp_clips.append(clip_path)
@@ -295,6 +474,7 @@ def create_beat_aligned_with_transitions(
     # per-boundary fallback styling
     fallback_style: str = "none",
     fallback_duration: float = 0.06,
+    mask_scope: str = "none",
 ):
     """Create a slideshow with xfade transitions aligned to beat-planned segment durations.
 
@@ -353,12 +533,36 @@ def create_beat_aligned_with_transitions(
             fps=fps,
         )
 
-    # Build ffmpeg inputs: looped stills with explicit -t
+    # Build ffmpeg inputs: looped stills with explicit -t (and optional masks)
     input_args = []
+    use_masks = False
+    masks = []
+    if mask_scope in ("foreground", "background"):
+        # Avoid heavy init during tests
+        if not os.environ.get("PYTEST_CURRENT_TEST"):
+            try:
+                # Lazy import to avoid PIL dependency at import time
+                from .background_removal import BackgroundRemover  # type: ignore
+                remover = BackgroundRemover()
+                if remover.is_available():
+                    for img in images:
+                        mask_path = remover.create_mask(img, None)
+                        masks.append(mask_path)
+                    if all(bool(m) for m in masks) and len(masks) == len(images):
+                        use_masks = True
+                else:
+                    use_masks = False
+            except Exception:
+                use_masks = False
+        else:
+            use_masks = False
     for img, d in zip(images, durations):
         input_args.append(f'-loop 1 -t {d:.3f} -i "{img}"')
+    if use_masks:
+        for m, d in zip(masks, durations):
+            input_args.append(f'-loop 1 -t {d:.3f} -i "{m}"')
 
-    # Filters: scale/pad each input to labeled stream sN
+    # Filters: scale/pad each input to labeled stream sN (and optional masks to mN)
     scale_parts = []
     for idx in range(count):
         scale_parts.append(
@@ -366,11 +570,25 @@ def create_beat_aligned_with_transitions(
             f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p[s{idx}]'
         )
     filters = [';'.join(scale_parts)]  # start filter graph with scaling chain
+    if use_masks:
+        mask_scale_parts = []
+        for idx in range(count):
+            # mask inputs start after image inputs
+            midx = count + idx
+            mask_scale_parts.append(
+                f'[{midx}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,'
+                f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,format=gray[m{idx}]'
+            )
+        filters.append(';'.join(mask_scale_parts))
 
     # Create chained xfade graph with offsets aligned near the beat
     prev_label = 's0'
     prev_duration = durations[0]
     last_label = prev_label
+    # Parallel mask chain
+    if use_masks:
+        mask_prev_label = 'm0'
+        mask_last_label = mask_prev_label
     transition_times = []  # absolute times (seconds) when the beat-aligned transition should "land"
     for i in range(1, count):
         curr_d = durations[i]
@@ -391,14 +609,30 @@ def create_beat_aligned_with_transitions(
                 elif fallback_style == "bloom":
                     eff = f"gblur=sigma={float(bloom_sigma):.2f}:steps=1:enable='between(t,{boundary_t:.3f},{(boundary_t+fallback_duration):.3f})'"
                 if eff:
-                    styled_label = f'sty{i}'
-                    filters.append(f'[{last_label}]{eff}[{styled_label}]')
-                    last_label = styled_label
+                    # Apply effect and optionally mask it
+                    eff_label = f'eff{i}'
+                    filters.append(f'[{last_label}]{eff}[{eff_label}]')
+                    if use_masks and mask_scope in ("foreground", "background"):
+                        mask_to_use = f'{mask_last_label}'
+                        if mask_scope == "background":
+                            inv_label = f'minv{i}'
+                            filters.append(f'[{mask_last_label}]negate,format=gray[{inv_label}]')
+                            mask_to_use = inv_label
+                        styled_label = f'sty{i}'
+                        filters.append(f'[{last_label}][{eff_label}][{mask_to_use}]maskedmerge[{styled_label}]')
+                        last_label = styled_label
+                    else:
+                        last_label = eff_label
 
             filters.append(f'[{last_label}][s{i}]concat=n=2:v=1:a=0[{out_label}]')
             transition_times.append(boundary_t)
             last_label = out_label
             prev_duration = prev_duration + curr_d
+            # Mask chain concat in parallel
+            if use_masks:
+                m_out_label = f'mv{i}'
+                filters.append(f'[{mask_last_label}][m{i}]concat=n=2:v=1:a=0[{m_out_label}]')
+                mask_last_label = m_out_label
         else:
             if align == "midpoint":
                 offset = max(0.0, prev_duration - (td_eff / 2.0))
@@ -412,9 +646,18 @@ def create_beat_aligned_with_transitions(
             transition_times.append(prev_duration)
             last_label = out_label
             prev_duration = prev_duration + curr_d - td_eff
+            if use_masks:
+                m_out_label = f'mv{i}'
+                # Use simple fade for masks to align with visual transition
+                filters.append(
+                    f'[{mask_last_label}][m{i}]xfade=transition=fade:duration={td_eff:.3f}:offset={offset:.3f}[{m_out_label}]'
+                )
+                mask_last_label = m_out_label
 
     if count == 1:
         last_label = 's0'
+        if use_masks:
+            mask_last_label = 'm0'
 
     # Build list of overlay times: prefer true beat times if provided; otherwise use xfade landing times
     overlay_times = []
@@ -507,6 +750,16 @@ def create_beat_aligned_with_transitions(
             out_overlay_label = 'vo'
             filters.append(f'[{last_label}]{overlay_chain}[{out_overlay_label}]')
             final_label = out_overlay_label
+            # If masking requested, merge base and effect with mask
+            if use_masks and mask_scope in ("foreground", "background"):
+                mask_to_use = f'{mask_last_label}'
+                if mask_scope == "background":
+                    inv_label = 'm_final_inv'
+                    filters.append(f'[{mask_last_label}]negate,format=gray[{inv_label}]')
+                    mask_to_use = inv_label
+                merged_label = 'vom'
+                filters.append(f'[{last_label}][{final_label}][{mask_to_use}]maskedmerge[{merged_label}]')
+                final_label = merged_label
 
     filter_complex = ';'.join(filters)
 

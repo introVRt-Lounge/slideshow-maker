@@ -101,6 +101,11 @@ Notes:
   - Adds gaussian blur pulse at each beat for a soft bloom.
   - Defaults: `--bloom-sigma 8.0 --bloom-dur 0.08`.
 
+- **--mask-scope none|foreground|background** (requires rembg)
+  - Restrict beat pulses/glow overlays and per-boundary fallback effects to the detected subject (foreground) or the background.
+  - Implementation uses rembg to generate per-image alpha masks; effects are gated via FFmpeg `maskedmerge`.
+  - Notes: mask generation adds processing time; if rembg is unavailable, scope silently falls back to `none`.
+
 - **--counter**
   - Shows a sticky beat counter that increments each beat and persists until the next beat.
   - Options: `--counter-size 36` and `--counter-pos tr|tl|br|bl`.
