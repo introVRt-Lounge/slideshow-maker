@@ -129,7 +129,18 @@ def create_slideshow_chunked(images: List[str], output_file: str, min_duration: 
                     prev_clip = temp_clips[j-1]
                     curr_clip = temp_clips[j]
                     transition_file = f"{temp_dir}/transition_{chunk_idx}_{j}.mp4"
-                    transition_type = random.choice(available_transitions)
+                    # Choose a transition that is supported by current ffmpeg (probe once)
+                    candidates = available_transitions[:]
+                    random.shuffle(candidates)
+                    transition_type = None
+                    for cand in candidates:
+                        test_cmd = f'ffmpeg -v error -f lavfi -i "color=red:size=320x240:duration=2" -f lavfi -i "color=blue:size=320x240:duration=2" -filter_complex "[0:v][1:v]xfade=transition={cand}:duration=1.0:offset=1.0" -t 1 -f null -'
+                        if run_command(test_cmd, f"    Probe transition {cand}", show_output=False):
+                            transition_type = cand
+                            break
+                    if transition_type is None:
+                        # Fallback to a safe transition
+                        transition_type = 'fade'
                     if capabilities['gpu_transitions_supported']:
                         cmd = f'ffmpeg -y -init_hw_device opencl=ocl:0.0 -filter_hw_device ocl -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v]format=rgba,hwupload=extra_hw_frames=16[0hw];[1:v]format=rgba,hwupload=extra_hw_frames=16[1hw];[0hw][1hw]xfade_opencl=transition={transition_type}:duration={DEFAULT_TRANSITION_DURATION}:offset={duration-DEFAULT_TRANSITION_DURATION:.1f},hwdownload,format=yuv420p" -c:v libx264 -r {fps} -crf {DEFAULT_CRF} -preset {DEFAULT_PRESET} -t {duration:.1f} "{transition_file}"'
                     else:

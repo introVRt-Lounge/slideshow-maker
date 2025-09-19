@@ -1041,7 +1041,10 @@ def create_slideshow_chunked(images, output_file, min_duration=DEFAULT_MIN_DURAT
                         os.remove(clip)
                     except:
                         pass
-                os.remove(concat_file)
+                try:
+                    os.remove(concat_file)
+                except Exception:
+                    pass
 
             # Clean up original temp clips
             for clip in temp_clips:
