@@ -252,6 +252,180 @@ def create_slideshow_with_durations(
     shutil.rmtree(temp_dir, ignore_errors=True)
     return ok
 
+
+def create_beat_aligned_with_transitions(
+    images,
+    durations,
+    output_file,
+    *,
+    width=DEFAULT_WIDTH,
+    height=DEFAULT_HEIGHT,
+    fps=DEFAULT_FPS,
+    transition_type: str = "fade",
+    transition_duration: float = DEFAULT_TRANSITION_DURATION,
+    align: str = "midpoint",
+    min_effective: float = 0.25,
+    # debug overlays
+    mark_transitions: bool = False,
+    marker_duration: float = 0.12,
+    pulse: bool = False,
+    pulse_duration: float = 0.08,
+    pulse_saturation: float = 1.25,
+    pulse_brightness: float = 0.00,
+    bloom: bool = False,
+    bloom_sigma: float = 8.0,
+    bloom_duration: float = 0.08,
+    overlay_beats=None,
+    overlay_beat_multiplier: int = 1,
+    overlay_phase: float = 0.0,
+    overlay_guard_seconds: float = 0.0,
+    mark_cuts: bool = False,
+):
+    """Create a slideshow with xfade transitions aligned to beat-planned segment durations.
+
+    Safety: If any effective transition duration would be too small (< min_effective)
+    for a given adjacent segment pair, fallback to hardcuts for the entire render.
+    """
+    if not images:
+        print("No images found!")
+        return False
+
+    count = min(len(images), len(durations))
+    images = images[:count]
+    durations = [max(0.1, float(d)) for d in durations[:count]]
+
+    # Safety check: if any pair too short for xfade with reasonable effect, fallback
+    too_short = False
+    for i in range(1, count):
+        prev_d = durations[i - 1]
+        curr_d = durations[i]
+        td_eff = min(max(0.05, transition_duration), max(0.05, prev_d - 0.05), max(0.05, curr_d - 0.05))
+        if td_eff < min_effective:
+            too_short = True
+            break
+    if too_short:
+        print("⚠️ Segments too short for safe xfade; falling back to hard cuts.")
+        return create_slideshow_with_durations(
+            images,
+            durations,
+            output_file,
+            width=width,
+            height=height,
+            fps=fps,
+        )
+
+    # Build ffmpeg inputs: looped stills with explicit -t
+    input_args = []
+    for img, d in zip(images, durations):
+        input_args.append(f'-loop 1 -t {d:.3f} -i "{img}"')
+
+    # Filters: scale/pad each input to labeled stream sN
+    scale_parts = []
+    for idx in range(count):
+        scale_parts.append(
+            f'[{idx}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,'
+            f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p[s{idx}]'
+        )
+    filters = [';'.join(scale_parts)]  # start filter graph with scaling chain
+
+    # Create chained xfade graph with offsets aligned near the beat
+    prev_label = 's0'
+    prev_duration = durations[0]
+    last_label = prev_label
+    transition_times = []  # absolute times (seconds) when the beat-aligned transition should "land"
+    for i in range(1, count):
+        curr_d = durations[i]
+        td_eff = min(max(0.05, transition_duration), max(0.05, prev_duration - 0.05), max(0.05, curr_d - 0.05))
+        if align == "midpoint":
+            offset = max(0.0, prev_duration - (td_eff / 2.0))
+        else:
+            offset = max(0.0, prev_duration - td_eff)
+        out_label = f'v{i}'
+        filters.append(
+            f'[{last_label}][s{i}]xfade=transition={transition_type}:duration={td_eff:.3f}:offset={offset:.3f}[{out_label}]'
+        )
+        # The perceptual on-beat moment is at prev_duration for both align modes
+        transition_times.append(prev_duration)
+        last_label = out_label
+        prev_duration = prev_duration + curr_d - td_eff
+
+    if count == 1:
+        last_label = 's0'
+
+    # Build list of overlay times: prefer true beat times if provided; otherwise use xfade landing times
+    overlay_times = []
+    if overlay_beats:
+        # Apply optional phase and downsample by multiplier (every Nth beat)
+        for idx, bt in enumerate(overlay_beats, start=1):
+            if overlay_beat_multiplier > 1 and (idx % overlay_beat_multiplier) != 0:
+                continue
+            overlay_times.append(max(0.0, bt + overlay_phase))
+    else:
+        overlay_times = list(transition_times)
+
+    # Optional overlays (ticks/pulses) after the xfade chain
+    final_label = last_label
+    overlay_chain_parts = []
+    if overlay_times:
+        # Optionally exclude overlays that are too close to transition landing times
+        if overlay_guard_seconds > 0 and transition_times:
+            guarded = []
+            for bt in overlay_times:
+                if all(abs(bt - xt) >= overlay_guard_seconds for xt in transition_times):
+                    guarded.append(bt)
+            overlay_times = guarded
+
+        # Cut markers first (drawn underneath beat markers)
+        if mark_cuts and transition_times and marker_duration > 0:
+            for tt in transition_times:
+                overlay_chain_parts.append(
+                    f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=red@1.0:t=fill:enable='between(t,{tt:.3f},{(tt+marker_duration):.3f})'"
+                )
+
+        # Beat tick markers (white), drawn after to appear on top
+        if (mark_transitions or overlay_beats) and marker_duration > 0:
+            for tt in overlay_times:
+                overlay_chain_parts.append(
+                    f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=white@1.0:t=fill:enable='between(t,{tt:.3f},{(tt+marker_duration):.3f})'"
+                )
+        # Pulse
+        if pulse and pulse_duration > 0 and (pulse_saturation > 1.0 or pulse_brightness != 0.0):
+            for tt in overlay_times:
+                overlay_chain_parts.append(
+                    f"eq=saturation={float(pulse_saturation):.3f}:brightness={float(pulse_brightness):.3f}:enable='between(t,{tt:.3f},{(tt+pulse_duration):.3f})'"
+                )
+        # Bloom
+        if bloom and bloom_duration > 0 and bloom_sigma > 0:
+            for tt in overlay_times:
+                overlay_chain_parts.append(
+                    f"gblur=sigma={float(bloom_sigma):.2f}:steps=1:enable='between(t,{tt:.3f},{(tt+bloom_duration):.3f})'"
+                )
+        if overlay_chain_parts:
+            overlay_chain = ','.join(overlay_chain_parts)
+            out_overlay_label = 'vo'
+            filters.append(f'[{last_label}]{overlay_chain}[{out_overlay_label}]')
+            final_label = out_overlay_label
+
+    filter_complex = ';'.join(filters)
+
+    nvenc_available = detect_nvenc_support()
+    enc = get_encoding_params(nvenc_available, fps)
+
+    cmd = (
+        f'ffmpeg -y {" ".join(input_args)} -filter_complex "{filter_complex}" '
+        f'-map [{final_label}] {enc} -pix_fmt yuv420p "{output_file}"'
+    )
+    ok = run_command(cmd, "Beat-aligned transitions", show_output=True, timeout_seconds=300)
+    if ok:
+        return True
+    # CPU fallback if NVENC path failed
+    cpu_enc = get_encoding_params(False, fps)
+    cmd_cpu = (
+        f'ffmpeg -y {" ".join(input_args)} -filter_complex "{filter_complex}" '
+        f'-map [{final_label}] {cpu_enc} -pix_fmt yuv420p "{output_file}"'
+    )
+    return run_command(cmd_cpu, "Beat-aligned transitions (CPU fallback)", show_output=True, timeout_seconds=300)
+
 def create_slideshow_chunked(images, output_file, min_duration=DEFAULT_MIN_DURATION, 
                            max_duration=DEFAULT_MAX_DURATION, width=DEFAULT_WIDTH, 
                            height=DEFAULT_HEIGHT, fps=DEFAULT_FPS, temp_dir=None):

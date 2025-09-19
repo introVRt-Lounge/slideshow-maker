@@ -50,7 +50,32 @@ def main(argv: List[str]) -> int:
     p.add_argument("--counter", action="store_true", default=False, help="Show numeric counter at each beat")
     p.add_argument("--counter-size", type=int, default=36, help="Beat counter font size")
     p.add_argument("--counter-pos", type=str, choices=["tr","tl","br","bl"], default="tr", help="Beat counter position")
+    p.add_argument("--preset", type=str, choices=["music-video"], help="Preset of sensible defaults")
+    p.add_argument("--beat-mult", type=int, default=1, help="Overlay beat multiplier (1=every beat, 2=every other, etc.)")
+    p.add_argument("--overlay-phase", type=float, default=0.0, help="Overlay phase offset seconds (advance/retard overlays)")
+    p.add_argument("--cut-markers", action="store_true", default=False, help="Draw red tick marks at transition landings")
+    p.add_argument("--overlay-guard", type=float, default=0.0, help="Do not pulse/tick within N seconds of a transition")
     args = p.parse_args(argv)
+
+    # Apply preset defaults early
+    if args.preset == "music-video":
+        # Only override if user left defaults
+        if args.align == "midpoint":
+            pass
+        else:
+            args.align = "midpoint"
+        if args.xfade == 0.6:
+            pass
+        else:
+            args.xfade = float(args.xfade)
+        if args.phase == -0.03:
+            pass
+        else:
+            args.phase = float(args.phase)
+        if args.period == [5.0, 10.0]:
+            args.period = [5.0, 10.0]
+        if args.target == 7.5:
+            args.target = 7.5
 
     beats = detect_beats(args.audio)
     if not beats:
@@ -161,6 +186,20 @@ def main(argv: List[str]) -> int:
             transition_type=args.transition,
             transition_duration=float(args.xfade),
             align=args.align,
+            mark_transitions=bool(args.debug or args.mark_beats),
+            marker_duration=0.12,
+            pulse=bool(args.pulse),
+            pulse_duration=float(args.pulse_dur),
+            pulse_saturation=float(args.pulse_sat),
+            pulse_brightness=float(args.pulse_bright),
+            bloom=bool(args.bloom),
+            bloom_sigma=float(args.bloom_sigma),
+            bloom_duration=float(args.bloom_dur),
+            overlay_beats=beats,
+            overlay_beat_multiplier=int(args.beat_mult),
+            overlay_phase=float(args.overlay_phase),
+            overlay_guard_seconds=float(args.overlay_guard),
+            mark_cuts=bool(args.cut_markers),
         )
     if not ok:
         return 4

@@ -48,9 +48,25 @@ PYTHONPATH=src python3 -m slideshow_maker.cli.beatslides <audio_file> <images_di
 
 - Transitions mode (experimental):
   - **--transition NAME** (default: fade)
-  - **--xfade SECONDS** (default: 1.0)
-  - **--align end|midpoint** (default: end)
+  - **--xfade SECONDS** (default: 0.6)
+  - **--align end|midpoint** (default: midpoint)
   - Tip: for on-beat perceptual switch, prefer `--align midpoint --xfade 0.5..0.8 --phase -0.03`.
+- **--preset music-video**
+  - Shortcut to sensible defaults: `--align midpoint --xfade 0.6 --phase -0.03 --period 5 10 --target 7.5`.
+
+#### Transitions overlays (diagnostics on top of transitions)
+- **--beat-mult N** (default: 1)
+  - Downsample overlays to every Nth beat (e.g., 2 = every other beat) to reduce visual clutter.
+- **--overlay-phase SECONDS** (default: 0.0)
+  - Phase offset applied to overlays only (does not change transitions). Useful to test perceived latency.
+- **--overlay-guard SECONDS** (default: 0.0)
+  - Suppress beat ticks/pulses that occur within N seconds of a transition landing to avoid double flashes.
+- **--cut-markers**
+  - Draw a red vertical tick at the transition landing time. White ticks are the true beat times.
+
+Notes:
+- In `--align midpoint`, the fade starts before the beat and the mid-point of the fade lands on the beat. Red cut markers (if enabled) visualize the transition landing; white ticks visualize actual beat times.
+- For strict on-beat hardcuts, use `--hardcuts` (no crossfade) and verify alignment with `--mark-beats`.
 
 ### Debug overlays (hardcuts mode)
 
@@ -68,6 +84,10 @@ PYTHONPATH=src python3 -m slideshow_maker.cli.beatslides <audio_file> <images_di
 - **--counter**
   - Shows a sticky beat counter that increments each beat and persists until the next beat.
   - Options: `--counter-size 36` and `--counter-pos tr|tl|br|bl`.
+
+### Safety fallback
+
+- The transitions renderer automatically falls back to hardcuts when any segment pair is too short for a safe crossfade. This prevents broken or mid-frame transitions on rapid cuts.
 
 ### Audio options
 
@@ -92,6 +112,13 @@ Transitions test (perceptual on-beat midpoints):
 ```bash
 PYTHONPATH=src python3 -m slideshow_maker.cli.beatslides song.mp3 ./images \
   --transition fade --xfade 0.6 --align midpoint --phase -0.03
+```
+
+Transitions with on-beat overlays (every other beat) and guard near transitions:
+```bash
+PYTHONPATH=src python3 -m slideshow_maker.cli.beatslides song.mp3 ./images \
+  --transition fade --xfade 0.6 --align midpoint --phase -0.03 \
+  --beat-mult 2 --overlay-guard 0.08 --debug
 ```
 
 ### Notes
