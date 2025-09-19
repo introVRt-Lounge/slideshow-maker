@@ -9,7 +9,7 @@ import shutil
 from .config import (
     DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_FPS, DEFAULT_CRF, DEFAULT_PRESET,
     DEFAULT_MIN_DURATION, DEFAULT_MAX_DURATION, DEFAULT_TRANSITION_DURATION,
-    DEFAULT_CHUNK_SIZE, VIDEO_OUTPUT
+    DEFAULT_CHUNK_SIZE, VIDEO_OUTPUT, TEMP_DIR
 )
 from .transitions import get_random_transition
 from .utils import run_command, get_image_info, get_available_transitions, print_ffmpeg_capabilities, detect_nvenc_support
@@ -25,7 +25,7 @@ def get_encoding_params(nvenc_available, fps):
 
 def create_slideshow(images, output_file, min_duration=DEFAULT_MIN_DURATION, 
                     max_duration=DEFAULT_MAX_DURATION, width=DEFAULT_WIDTH, 
-                    height=DEFAULT_HEIGHT, fps=DEFAULT_FPS):
+                    height=DEFAULT_HEIGHT, fps=DEFAULT_FPS, temp_dir=None):
     """Create slideshow video from images with smooth transitions using FFmpeg xfade"""
 
     if len(images) == 0:
@@ -41,16 +41,229 @@ def create_slideshow(images, output_file, min_duration=DEFAULT_MIN_DURATION,
     print(f"🎬 Creating slideshow with {len(images)} images and smooth transitions...")
 
     # Use chunked approach with crossfades between chunks
-    return create_slideshow_chunked(images, output_file, min_duration, max_duration, width, height, fps)
+    return create_slideshow_chunked(images, output_file, min_duration, max_duration, width, height, fps, temp_dir)
 
+
+def create_slideshow_with_durations(
+    images,
+    durations,
+    output_file,
+    width=DEFAULT_WIDTH,
+    height=DEFAULT_HEIGHT,
+    fps=DEFAULT_FPS,
+    temp_dir=None,
+    visualize_cuts: bool = False,
+    marker_duration: float = 0.12,
+    beat_markers=None,
+    pulse_beats=None,
+    pulse_duration: float = 0.08,
+    pulse_saturation: float = 1.25,
+    pulse_brightness: float = 0.00,
+    pulse_bloom: bool = False,
+    pulse_bloom_sigma: float = 8.0,
+    pulse_bloom_duration: float = 0.08,
+    counter_beats=None,
+    counter_fontsize: int = 36,
+    counter_position: str = "tr",
+    cut_markers=None,
+):
+    """Create a slideshow where each image uses an explicit duration (no transitions).
+
+    Minimal, reliable path to support beat-aligned segment lengths. Transitions will
+    be added in a later phase; this function focuses on honoring exact durations.
+    """
+    if len(images) == 0:
+        print("No images found!")
+        return False
+
+    if temp_dir is None:
+        temp_dir = ".slideshow_tmp"
+    os.makedirs(temp_dir, exist_ok=True)
+
+    # Trim to matching counts
+    count = min(len(images), len(durations))
+    images = images[:count]
+    durations = durations[:count]
+
+    temp_clips = []
+    print(f"🎬 Creating fixed-duration clips for {count} images...")
+
+    elapsed = 0.0
+    for i, (img, dur) in enumerate(zip(images, durations)):
+        # Quantize duration to exact frame count to keep cuts on frame boundaries
+        frames = max(1, int(round(float(dur) * fps)))
+        dur = max(1.0 / fps, frames / float(fps))
+
+        clip_path = f"{temp_dir}/clip_{i:04d}.mp4"
+        vf_parts = [
+            f"scale={width}:{height}:force_original_aspect_ratio=decrease",
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
+        ]
+
+        # Debug cut marker at clip start (except first)
+        if visualize_cuts and i > 0 and marker_duration > 0:
+            vf_parts.append(
+                f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=white@1.0:t=fill:enable='between(t,0,{marker_duration:.3f})'"
+            )
+
+        # Beat markers across the clip
+        if beat_markers:
+            try:
+                for bt in beat_markers:
+                    if bt < elapsed:
+                        continue
+                    if bt >= elapsed + dur:
+                        break
+                    rel_t = max(0.0, bt - elapsed)
+                    vf_parts.append(
+                        f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=white@1.0:t=fill:enable='between(t,{rel_t:.3f},{(rel_t+marker_duration):.3f})'"
+                    )
+            except Exception:
+                pass
+
+        # Selected cut markers (distinct color) - draw slightly before clip end
+        if cut_markers:
+            try:
+                for ct in cut_markers:
+                    if ct <= elapsed:
+                        continue
+                    if ct > elapsed + dur:
+                        break
+                    rel_t = max(0.0, ct - elapsed)
+                    rel_t = min(max(0.0, rel_t - 0.02), max(0.0, dur - 0.02))
+                    vf_parts.append(
+                        f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=red@1.0:t=fill:enable='between(t,{rel_t:.3f},{(rel_t+marker_duration):.3f})'"
+                    )
+            except Exception:
+                pass
+
+        # Pulse saturation/brightness at beats
+        if pulse_beats and pulse_duration > 0 and (pulse_saturation > 1.0 or pulse_brightness != 0.0):
+            try:
+                for bt in pulse_beats:
+                    if bt < elapsed:
+                        continue
+                    if bt >= elapsed + dur:
+                        break
+                    rel_t = max(0.0, bt - elapsed)
+                    vf_parts.append(
+                        f"eq=saturation={float(pulse_saturation):.3f}:brightness={float(pulse_brightness):.3f}:enable='between(t,{rel_t:.3f},{(rel_t+pulse_duration):.3f})'"
+                    )
+            except Exception:
+                pass
+
+        # Bloom pulse via gaussian blur
+        if pulse_bloom and pulse_bloom_duration > 0 and pulse_bloom_sigma > 0:
+            try:
+                beats_for_bloom = pulse_beats or beat_markers or []
+                for bt in beats_for_bloom:
+                    if bt < elapsed:
+                        continue
+                    if bt >= elapsed + dur:
+                        break
+                    rel_t = max(0.0, bt - elapsed)
+                    vf_parts.append(
+                        f"gblur=sigma={float(pulse_bloom_sigma):.2f}:steps=1:enable='between(t,{rel_t:.3f},{(rel_t+pulse_bloom_duration):.3f})'"
+                    )
+            except Exception:
+                pass
+
+        # Sticky numeric beat counter
+        if counter_beats and counter_fontsize > 0:
+            try:
+                beats_in_order = list(counter_beats)
+                # Count beats strictly before this clip
+                count_before = 0
+                first_idx_in_clip = None
+                for idx_b, b in enumerate(beats_in_order):
+                    if b < elapsed:
+                        count_before += 1
+                    else:
+                        first_idx_in_clip = idx_b
+                        break
+
+                # Position presets
+                if counter_position == "tr":
+                    x_expr = "w-tw-20"; y_expr = "20"
+                elif counter_position == "tl":
+                    x_expr = "20"; y_expr = "20"
+                elif counter_position == "br":
+                    x_expr = "w-tw-20"; y_expr = "h-th-20"
+                else:
+                    x_expr = "20"; y_expr = "h-th-20"
+
+                # Carry previous number until first beat in clip
+                first_rel = None
+                if first_idx_in_clip is not None and first_idx_in_clip < len(beats_in_order):
+                    first_rel = max(0.0, beats_in_order[first_idx_in_clip] - elapsed)
+                if count_before > 0 and first_rel is not None and first_rel > 0:
+                    prev_idx = count_before
+                    vf_parts.append(
+                        "drawtext=fontfile='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'"
+                        f":text='{prev_idx}':x={x_expr}:y={y_expr}:fontsize={int(counter_fontsize)}:fontcolor=white:"
+                        f"bordercolor=black:borderw=2:enable='between(t,0,{first_rel:.3f})'"
+                    )
+
+                # Per-beat number until next beat (or clip end)
+                local_beats = []
+                for bt in beats_in_order:
+                    if bt < elapsed:
+                        continue
+                    if bt >= elapsed + dur:
+                        break
+                    local_beats.append(bt)
+
+                for j, bt in enumerate(local_beats):
+                    rel_t = max(0.0, bt - elapsed)
+                    rel_next = dur if j + 1 >= len(local_beats) else max(0.0, local_beats[j + 1] - elapsed)
+                    idx = count_before + j + 1
+                    vf_parts.append(
+                        "drawtext=fontfile='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'"
+                        f":text='{idx}':x={x_expr}:y={y_expr}:fontsize={int(counter_fontsize)}:fontcolor=white:"
+                        f"bordercolor=black:borderw=2:enable='between(t,{rel_t:.3f},{rel_next:.3f})'"
+                    )
+            except Exception:
+                pass
+
+        vf_filter = ",".join(vf_parts)
+        cmd = (
+            f'ffmpeg -y -loop 1 -i "{img}" -t {float(dur):.3f} '
+            f'-vf "{vf_filter}" -frames:v {frames} -c:v libx264 -r {fps} "{clip_path}"'
+        )
+        if not run_command(cmd, f"Clip {i+1}/{count} ({dur:.2f}s)"):
+            return False
+        temp_clips.append(clip_path)
+        elapsed += float(dur)
+
+    # Concat
+    if len(temp_clips) == 1:
+        os.rename(temp_clips[0], output_file)
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return True
+
+    concat_list = f"{temp_dir}/concat.txt"
+    with open(concat_list, "w") as f:
+        for clip in temp_clips:
+            f.write(f"file '{os.path.abspath(clip)}'\n")
+
+    cmd = f'ffmpeg -y -f concat -safe 0 -i "{concat_list}" -c copy "{output_file}"'
+    ok = run_command(cmd, "Concatenating fixed-duration clips")
+
+    shutil.rmtree(temp_dir, ignore_errors=True)
+    return ok
 
 def create_slideshow_chunked(images, output_file, min_duration=DEFAULT_MIN_DURATION, 
                            max_duration=DEFAULT_MAX_DURATION, width=DEFAULT_WIDTH, 
-                           height=DEFAULT_HEIGHT, fps=DEFAULT_FPS):
+                           height=DEFAULT_HEIGHT, fps=DEFAULT_FPS, temp_dir=None):
     """Create slideshow in very small chunks for reliability with VARIED transitions"""
     # Use much smaller chunks to avoid FFmpeg complexity limits
     chunk_size = DEFAULT_CHUNK_SIZE
-    temp_dir = "temp_chunks"
+    # Use specified temp directory or default
+    if temp_dir is None:
+        temp_dir = TEMP_DIR
+    else:
+        from .config import get_temp_dir
+        temp_dir = get_temp_dir(temp_dir)
     os.makedirs(temp_dir, exist_ok=True)
 
     # Detect FFmpeg capabilities and get available transitions
@@ -82,6 +295,12 @@ def create_slideshow_chunked(images, output_file, min_duration=DEFAULT_MIN_DURAT
         chunk = images[chunk_start:chunk_start + chunk_size]
         chunk_file = f"{temp_dir}/chunk_{chunk_idx:03d}.mp4"
 
+        # Check if chunk already exists (resume capability)
+        if os.path.exists(chunk_file):
+            print(f"  ⏭️  Chunk {chunk_idx + 1}/{(len(images) + chunk_size - 1) // chunk_size} already exists - skipping")
+            chunk_files.append(chunk_file)
+            continue
+
         print(f"  🔄 Processing chunk {chunk_idx + 1}/{(len(images) + chunk_size - 1) // chunk_size}")
 
         # Create simple concatenation without complex transitions
@@ -104,14 +323,20 @@ def create_slideshow_chunked(images, output_file, min_duration=DEFAULT_MIN_DURAT
             # Use optimal encoding based on available hardware
             encoding_params = get_encoding_params(nvenc_available, fps)
             cmd = f'ffmpeg -y -loop 1 -i "{img}" -t {duration:.1f} -vf "{vf_filter}" {encoding_params} "{temp_clip}"'
-            if not run_command(cmd, f"    Creating image {i+1}/{len(chunk)}", show_output=False):
-                return False
+            if not run_command(cmd, f"    Creating image {i+1}/{len(chunk)}", show_output=False, timeout_seconds=30):
+                print(f"    ⚠️  Skipping problematic image: {os.path.basename(img)}")
+                continue  # Skip this image instead of failing the entire chunk
             temp_clips.append(temp_clip)
+
+        # Check if we have any valid images in this chunk
+        if len(temp_clips) == 0:
+            print(f"    ⚠️  No valid images in chunk {chunk_idx + 1} - skipping")
+            continue
 
         # Create VARIED transitions between ALL images in this chunk
         if len(temp_clips) == 1:
-            # Just rename single clip
-            os.rename(temp_clips[0], chunk_file)
+            # Just move single clip (use shutil.move for cross-drive compatibility)
+            shutil.move(temp_clips[0], chunk_file)
         else:
             print(f"    🎭 Creating VARIED smooth transitions between {len(temp_clips)} images...")
 
@@ -204,8 +429,8 @@ def create_slideshow_chunked(images, output_file, min_duration=DEFAULT_MIN_DURAT
     print("\n🎬 Final concatenation...")
 
     if len(chunk_files) == 1:
-        # Just rename single chunk
-        os.rename(chunk_files[0], output_file)
+        # Just move single chunk (use shutil.move for cross-drive compatibility)
+        shutil.move(chunk_files[0], output_file)
         success = True
     else:
         # Simple concatenation - smooth transitions are already built into each chunk
@@ -215,10 +440,17 @@ def create_slideshow_chunked(images, output_file, min_duration=DEFAULT_MIN_DURAT
             for chunk_file in chunk_files:
                 f.write(f"file '{os.path.abspath(chunk_file)}'\n")
 
+        # Calculate timeout based on number of chunks (30 seconds per chunk, minimum 60 seconds)
+        timeout_seconds = max(60, len(chunk_files) * 30)
+        print(f"  ⏱️  Using {timeout_seconds}s timeout for {len(chunk_files)} chunks")
+        
         cmd = f'ffmpeg -y -f concat -safe 0 -i "{final_concat}" -c copy "{output_file}"'
-        success = run_command(cmd, "Creating final slideshow with smooth transitions")
+        success = run_command(cmd, "Creating final slideshow with smooth transitions", timeout_seconds=timeout_seconds)
 
-    # Clean up
-    shutil.rmtree(temp_dir, ignore_errors=True)
+    # Clean up only if successful
+    if success:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+    else:
+        print(f"⚠️  Final concatenation failed - temp files preserved in {temp_dir}")
 
     return success

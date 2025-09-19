@@ -39,6 +39,19 @@ AUDIO_OUTPUT = "audio_merged.m4a"
 VIDEO_OUTPUT = "slideshow_video.mp4"
 FINAL_OUTPUT = "slideshow_with_audio.mp4"
 
+# Temp directory - configurable for better performance
+import tempfile
+import os
+
+def get_temp_dir(custom_temp_dir=None):
+    """Get temp directory, with option to specify custom location"""
+    if custom_temp_dir:
+        return custom_temp_dir
+    return os.path.join(tempfile.gettempdir(), "slideshow_maker")
+
+# Default temp directory
+TEMP_DIR = get_temp_dir()
+
 # FFMPEG XFADE TRANSITIONS - CPU COMPATIBLE (No GPU Required)
 # Based on https://trac.ffmpeg.org/wiki/Xfade
 # These transitions work with standard xfade filter (no OpenCL/GPU required)

@@ -79,18 +79,23 @@ def run_command(cmd, description="", show_output=False, timeout_seconds: int = 1
         return False
 
 
-def get_audio_duration(audio_file, timeout_seconds: int = 1):
+def get_audio_duration(audio_file, timeout_seconds: int = 30):
     """Get duration of an audio file in seconds. Returns 0.0 on error/timeout."""
     try:
-        cmd = f'ffprobe -v error -show_entries format=duration -of csv=p=0 "{audio_file}"'
+        # Use a more reliable ffprobe command
+        cmd = f'ffprobe -v quiet -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{audio_file}"'
         result = subprocess.run(
             cmd, shell=True, capture_output=True, text=True, timeout=timeout_seconds
         )
-        if result.returncode == 0:
-            return float(result.stdout.strip())
+        if result.returncode == 0 and result.stdout.strip():
+            duration_str = result.stdout.strip()
+            if duration_str and duration_str != 'N/A':
+                return float(duration_str)
     except subprocess.TimeoutExpired:
+        print(f"Timeout getting audio duration for {audio_file}")
         return 0.0
-    except Exception:
+    except Exception as e:
+        print(f"Error getting audio duration: {e}")
         return 0.0
     return 0.0
 
