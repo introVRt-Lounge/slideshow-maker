@@ -538,24 +538,48 @@ def create_beat_aligned_with_transitions(
     use_masks = False
     masks = []
     if mask_scope in ("foreground", "background"):
-        # Avoid heavy init during tests
-        if not os.environ.get("PYTEST_CURRENT_TEST"):
-            try:
-                # Lazy import to avoid PIL dependency at import time
-                from .background_removal import BackgroundRemover  # type: ignore
-                remover = BackgroundRemover()
-                if remover.is_available():
-                    for img in images:
-                        mask_path = remover.create_mask(img, None)
-                        masks.append(mask_path)
-                    if all(bool(m) for m in masks) and len(masks) == len(images):
-                        use_masks = True
-                else:
-                    use_masks = False
-            except Exception:
-                use_masks = False
+        # Prefer precomputed masks next to images or in a sibling 'masks/' directory
+        found_all = True
+        tentative_masks = []
+        for img in images:
+            base, ext = os.path.splitext(img)
+            filename = os.path.basename(img)
+            name_no_ext, _ = os.path.splitext(filename)
+            candidates = [
+                f"{base}_mask.png",
+                os.path.join(os.path.dirname(img), "masks", f"{name_no_ext}_mask.png"),
+            ]
+            chosen = None
+            for cand in candidates:
+                if os.path.exists(cand):
+                    chosen = cand
+                    break
+            if chosen is None:
+                found_all = False
+                tentative_masks.append(None)
+            else:
+                tentative_masks.append(chosen)
+        if found_all and tentative_masks:
+            masks = tentative_masks  # type: ignore
+            use_masks = True
         else:
-            use_masks = False
+            # Avoid heavy init during tests; try rembg generation only if needed
+            if not os.environ.get("PYTEST_CURRENT_TEST"):
+                try:
+                    from .background_removal import BackgroundRemover  # type: ignore
+                    remover = BackgroundRemover()
+                    if remover.is_available():
+                        gen_masks = []
+                        for img in images:
+                            m = remover.create_mask(img, None)
+                            gen_masks.append(m)
+                        if all(bool(m) for m in gen_masks) and len(gen_masks) == len(images):
+                            masks = gen_masks  # type: ignore
+                            use_masks = True
+                    else:
+                        use_masks = False
+                except Exception:
+                    use_masks = False
     for img, d in zip(images, durations):
         input_args.append(f'-loop 1 -t {d:.3f} -i "{img}"')
     if use_masks:
@@ -613,13 +637,21 @@ def create_beat_aligned_with_transitions(
                     eff_label = f'eff{i}'
                     filters.append(f'[{last_label}]{eff}[{eff_label}]')
                     if use_masks and mask_scope in ("foreground", "background"):
+                        # Use alphamerge+overlay to avoid grayscale artifacts
+                        base_rgba = f'br{i}'
+                        eff_rgba = f'er{i}'
+                        eff_with_alpha = f'eam{i}'
+                        filters.append(f'[{last_label}]format=rgba[{base_rgba}]')
+                        filters.append(f'[{eff_label}]format=rgba[{eff_rgba}]')
                         mask_to_use = f'{mask_last_label}'
                         if mask_scope == "background":
                             inv_label = f'minv{i}'
                             filters.append(f'[{mask_last_label}]negate,format=gray[{inv_label}]')
                             mask_to_use = inv_label
+                        filters.append(f'[{eff_rgba}][{mask_to_use}]alphamerge[{eff_with_alpha}]')
                         styled_label = f'sty{i}'
-                        filters.append(f'[{last_label}][{eff_label}][{mask_to_use}]maskedmerge[{styled_label}]')
+                        # Overlay effect (with mask alpha) onto base
+                        filters.append(f'[{base_rgba}][{eff_with_alpha}]overlay=shortest=1:format=auto[{styled_label}]')
                         last_label = styled_label
                     else:
                         last_label = eff_label
@@ -682,29 +714,34 @@ def create_beat_aligned_with_transitions(
                     guarded.append(bt)
             overlay_times = guarded
 
+        # Separate draw overlays (ticks/counter) from effect overlays (pulse/bloom)
+        draw_parts = []
+        effect_parts = []
+
         # Cut markers first (drawn underneath beat markers)
         if mark_cuts and transition_times and marker_duration > 0:
             for tt in transition_times:
-                overlay_chain_parts.append(
+                draw_parts.append(
                     f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=red@1.0:t=fill:enable='between(t,{tt:.3f},{(tt+marker_duration):.3f})'"
                 )
 
         # Beat tick markers (white), drawn after to appear on top
         if (mark_transitions or overlay_beats) and marker_duration > 0:
             for tt in overlay_times:
-                overlay_chain_parts.append(
+                draw_parts.append(
                     f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=white@1.0:t=fill:enable='between(t,{tt:.3f},{(tt+marker_duration):.3f})'"
                 )
-        # Pulse
+
+        # Pulse effects on background/foreground only
         if pulse and pulse_duration > 0 and (pulse_saturation > 1.0 or pulse_brightness != 0.0):
             for tt in overlay_times:
-                overlay_chain_parts.append(
+                effect_parts.append(
                     f"eq=saturation={float(pulse_saturation):.3f}:brightness={float(pulse_brightness):.3f}:enable='between(t,{tt:.3f},{(tt+pulse_duration):.3f})'"
                 )
-        # Bloom
+        # Bloom glow
         if bloom and bloom_duration > 0 and bloom_sigma > 0:
             for tt in overlay_times:
-                overlay_chain_parts.append(
+                effect_parts.append(
                     f"gblur=sigma={float(bloom_sigma):.2f}:steps=1:enable='between(t,{tt:.3f},{(tt+bloom_duration):.3f})'"
                 )
 
@@ -727,7 +764,7 @@ def create_beat_aligned_with_transitions(
                 if numbered_beats:
                     first_bt = max(0.0, numbered_beats[0])
                     if first_bt > 0:
-                        overlay_chain_parts.append(
+                        draw_parts.append(
                             "drawtext=fontfile='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'"
                             f":text='0':x={x_expr}:y={y_expr}:fontsize={int(counter_fontsize)}:fontcolor=white:"
                             f"bordercolor=black:borderw=2:enable='between(t,0,{first_bt:.3f})'"
@@ -737,7 +774,7 @@ def create_beat_aligned_with_transitions(
                     start_t = max(0.0, bt)
                     end_t = total_length if j + 1 >= len(numbered_beats) else max(0.0, numbered_beats[j + 1])
                     label = j + 1
-                    overlay_chain_parts.append(
+                    draw_parts.append(
                         "drawtext=fontfile='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'"
                         f":text='{label}':x={x_expr}:y={y_expr}:fontsize={int(counter_fontsize)}:fontcolor=white:"
                         f"bordercolor=black:borderw=2:enable='between(t,{start_t:.3f},{end_t:.3f})'"
@@ -745,21 +782,41 @@ def create_beat_aligned_with_transitions(
             except Exception:
                 pass
 
-        if overlay_chain_parts:
-            overlay_chain = ','.join(overlay_chain_parts)
-            out_overlay_label = 'vo'
-            filters.append(f'[{last_label}]{overlay_chain}[{out_overlay_label}]')
-            final_label = out_overlay_label
-            # If masking requested, merge base and effect with mask
-            if use_masks and mask_scope in ("foreground", "background"):
-                mask_to_use = f'{mask_last_label}'
-                if mask_scope == "background":
-                    inv_label = 'm_final_inv'
-                    filters.append(f'[{mask_last_label}]negate,format=gray[{inv_label}]')
-                    mask_to_use = inv_label
-                merged_label = 'vom'
-                filters.append(f'[{last_label}][{final_label}][{mask_to_use}]maskedmerge[{merged_label}]')
-                final_label = merged_label
+        # Build split -> effects -> maskedmerge -> draws pipeline
+        base_label = 'ob'
+        eff_in_label = 'oe'
+        eff_out_label = 'oeo'
+        merged_label = 'om'
+        # Split the last_label into base/effect branches
+        # Ensure color space suitable; keep full color (rgba) for alpha overlays
+        filters.append(f'[{last_label}]format=rgba,split=2[{base_label}][{eff_in_label}]')
+        if effect_parts:
+            filters.append(f'[{eff_in_label}]{",".join(effect_parts)}[{eff_out_label}]')
+        else:
+            # No effects, just forward
+            eff_out_label = eff_in_label
+
+        # Choose mask (invert for background scope)
+        mask_to_use = mask_last_label if use_masks else None
+        if use_masks and mask_scope in ("foreground", "background"):
+            if mask_scope == "background":
+                inv_label = 'm_over_inv'
+                filters.append(f'[{mask_last_label}]negate,format=gray[{inv_label}]')
+                mask_to_use = inv_label
+            # Alpha merge effect branch with mask, then overlay onto base
+            eff_alpha = 'eff_over_alpha'
+            filters.append(f'[{eff_out_label}][{mask_to_use}]alphamerge[{eff_alpha}]')
+            filters.append(f'[{base_label}][{eff_alpha}]overlay=shortest=1:format=auto[{merged_label}]')
+            work_label = merged_label
+        else:
+            work_label = eff_out_label
+
+        # Apply draw overlays on top of merged output
+        final_label = work_label
+        if draw_parts:
+            out_draw_label = 'od'
+            filters.append(f'[{work_label}]{",".join(draw_parts)}[{out_draw_label}]')
+            final_label = out_draw_label
 
     filter_complex = ';'.join(filters)
 
