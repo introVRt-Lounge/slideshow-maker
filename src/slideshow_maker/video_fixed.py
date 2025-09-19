@@ -335,15 +335,16 @@ def create_slideshow_with_durations(
 
             cmd = (
                 f'ffmpeg -y -loop 1 -i "{img}" -loop 1 -i "{masks[i]}" -t {float(dur):.3f} '
-                f'-filter_complex "{filter_complex}" -map {map_label} -frames:v {frames} -c:v libx264 -r {fps} "{clip_path}"'
+                f'-filter_complex "{filter_complex}" -map {map_label} -frames:v {frames} '
+                f'-c:v libx264 -r {fps} -preset ultrafast -pix_fmt yuv420p "{clip_path}"'
             )
         else:
             vf_filter = ",".join(vf_parts)
             cmd = (
                 f'ffmpeg -y -loop 1 -i "{img}" -t {float(dur):.3f} '
-                f'-vf "{vf_filter}" -frames:v {frames} -c:v libx264 -r {fps} "{clip_path}"'
+                f'-vf "{vf_filter}" -frames:v {frames} -c:v libx264 -r {fps} -preset ultrafast -pix_fmt yuv420p "{clip_path}"'
             )
-        if not run_command(cmd, f"Clip {i+1}/{count} ({dur:.2f}s)"):
+        if not run_command(cmd, f"Clip {i+1}/{count} ({dur:.2f}s)", timeout_seconds=120):
             return False
         temp_clips.append(clip_path)
         elapsed += float(dur)
@@ -359,7 +360,7 @@ def create_slideshow_with_durations(
             f.write(f"file '{os.path.abspath(clip)}'\n")
 
     cmd = f'ffmpeg -y -f concat -safe 0 -i "{concat_list}" -c copy "{output_file}"'
-    ok = run_command(cmd, "Concatenating fixed-duration clips")
+    ok = run_command(cmd, "Concatenating fixed-duration clips", timeout_seconds=300)
 
     shutil.rmtree(temp_dir, ignore_errors=True)
     return ok
