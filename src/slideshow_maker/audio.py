@@ -14,7 +14,10 @@ def find_audio_files(directory):
     audio_files = []
     for ext in AUDIO_EXTENSIONS:
         audio_files.extend(glob.glob(os.path.join(directory, ext)))
-    return sorted(audio_files)
+    audio_files = sorted(audio_files)
+    # Exclude previously merged output to avoid recursive concat and codec mismatches
+    audio_files = [p for p in audio_files if os.path.basename(p) != AUDIO_OUTPUT]
+    return audio_files
 
 
 def merge_audio(audio_files, output_file):
@@ -38,7 +41,10 @@ def merge_audio(audio_files, output_file):
     success = run_command(cmd, f"Merging {len(audio_files)} audio files")
 
     # Clean up
-    os.remove(concat_file)
+    try:
+        os.remove(concat_file)
+    except Exception:
+        pass
 
     return success
 
@@ -51,8 +57,14 @@ def combine_video_audio(video_file, audio_file, output_file):
         print("Could not get audio duration")
         return False
 
-    # Loop video to match audio duration
-    cmd = f'ffmpeg -y -stream_loop -1 -i "{video_file}" -i "{audio_file}" -t {audio_duration} -c:v copy -c:a copy -shortest "{output_file}"'
+    # Loop video to match audio duration. Re-encode video to avoid timestamp/DTS issues with copy + stream_loop.
+    # Copy audio to keep original quality.
+    cmd = (
+        f'ffmpeg -y -stream_loop -1 -i "{video_file}" -i "{audio_file}" '
+        f'-t {audio_duration:.3f} -map 0:v:0 -map 1:a:0 '
+        f'-c:v libx264 -r 25 -crf 23 -preset ultrafast -pix_fmt yuv420p '
+        f'-c:a copy -shortest "{output_file}"'
+    )
     return run_command(cmd, f"Combining video and audio (duration: {audio_duration:.1f}s)")
 
 
