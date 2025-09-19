@@ -15,6 +15,13 @@ DEFAULT_MIN_DURATION = 3
 DEFAULT_MAX_DURATION = 5
 DEFAULT_TRANSITION_DURATION = 1.0
 
+# Beat-alignment defaults (Phase 1)
+PERIOD_MIN_DEFAULT = 5.0
+PERIOD_MAX_DEFAULT = 10.0
+TARGET_PERIOD_DEFAULT = 7.5
+GRACE_PERIOD_DEFAULT = 0.5
+MIN_CUT_GAP_DEFAULT = (2 * DEFAULT_TRANSITION_DURATION) + 0.05
+
 # Processing settings
 DEFAULT_CHUNK_SIZE = 10
 MAX_SLIDES_LIMIT = 2000
@@ -31,6 +38,19 @@ IMAGE_EXTENSIONS = ['*.png', '*.jpg', '*.jpeg']
 AUDIO_OUTPUT = "audio_merged.m4a"
 VIDEO_OUTPUT = "slideshow_video.mp4"
 FINAL_OUTPUT = "slideshow_with_audio.mp4"
+
+# Temp directory - configurable for better performance
+import tempfile
+import os
+
+def get_temp_dir(custom_temp_dir=None):
+    """Get temp directory, with option to specify custom location"""
+    if custom_temp_dir:
+        return custom_temp_dir
+    return os.path.join(tempfile.gettempdir(), "slideshow_maker")
+
+# Default temp directory
+TEMP_DIR = get_temp_dir()
 
 # FFMPEG XFADE TRANSITIONS - CPU COMPATIBLE (No GPU Required)
 # Based on https://trac.ffmpeg.org/wiki/Xfade

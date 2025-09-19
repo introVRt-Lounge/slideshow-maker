@@ -23,8 +23,9 @@ def main():
     image_dir = "."
     test_mode = False
     dry_run = False
-    min_duration = 3
-    max_duration = 5
+    min_duration = 7
+    max_duration = 10
+    temp_dir = None
 
     # Parse command line arguments
     i = 0
@@ -41,6 +42,9 @@ def main():
         elif args[i] == "--max-duration" and i + 1 < len(args):
             max_duration = int(args[i + 1])
             i += 2
+        elif args[i] == "--temp-dir" and i + 1 < len(args):
+            temp_dir = args[i + 1]
+            i += 2
         elif not args[i].startswith("--"):
             image_dir = args[i]
             i += 1
@@ -53,7 +57,8 @@ def main():
         test_mode=test_mode,
         dry_run=dry_run,
         min_duration=min_duration,
-        max_duration=max_duration
+        max_duration=max_duration,
+        temp_dir=temp_dir
     )
 
     if not success:

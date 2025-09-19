@@ -87,6 +87,10 @@ success = create_slideshow_with_audio(
 )
 ```
 
+### Beat-Aligned Slideshow CLI
+
+See docs/beatslides.md for the full reference of the `beatslides` command, including beat detection, selection windows, and on-beat debug overlays (markers, pulses, bloom, counters).
+
 ### Backward Compatibility
 
 The old `slideshow.py` file is still available for backward compatibility:
