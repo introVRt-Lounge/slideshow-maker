@@ -73,6 +73,10 @@ def select_beats(
         if cand is None:
             break
 
+        # If selecting this cut would leave a tail shorter than MIN, stop planning
+        if cand + MIN > audio_end:
+            break
+
         if chosen and (cand - chosen[-1]) < min_cut_gap:
             # Try to find next best candidate that satisfies min_cut_gap
             viable = [c for c in S if (not chosen) or (c - chosen[-1]) >= min_cut_gap]
