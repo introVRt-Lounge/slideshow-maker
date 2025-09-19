@@ -51,8 +51,13 @@ PYTHONPATH=src python3 -m slideshow_maker.cli.beatslides <audio_file> <images_di
   - **--xfade SECONDS** (default: 0.6)
   - **--align end|midpoint** (default: midpoint)
   - Tip: for on-beat perceptual switch, prefer `--align midpoint --xfade 0.5..0.8 --phase -0.03`.
-- **--preset music-video**
-  - Shortcut to sensible defaults: `--align midpoint --xfade 0.6 --phase -0.03 --period 5 10 --target 7.5`.
+- **--preset NAME**
+  - `music-video` (default style): `align=midpoint, xfade=0.6, phase=-0.03, period=5..10, target=7.5, quantize=nearest`
+  - `hypercut`: aggressive, near-beat cuts: `align=end, xfade=0.25, phase=-0.01, period=0.7..2.0, target=1.2, quantize=floor, all-beats`
+  - `slow-cinematic`: long holds, soft fades: `align=midpoint, xfade=1.2, phase=-0.01, period=8..16, target=12.0, quantize=nearest`
+  - `documentary`: moderate holds, subtle fades: `align=end, xfade=0.3, phase=0.0, period=6..12, target=9.0, quantize=floor`
+  - `edm-strobe`: fast beat-driven: `align=midpoint, xfade=0.3, phase=-0.02, period=0.5..1.2, target=0.75, quantize=nearest, all-beats`
+  - Preset behavior: presets set values only when you left the parser defaults; any explicit flag you provide wins. Min gap is enforced to `>= 2*xfade + 0.05` automatically.
 
 #### Transitions overlays (diagnostics on top of transitions)
 - **--beat-mult N** (default: 1)
@@ -76,6 +81,13 @@ Notes:
   - floor: always shorten to previous frame boundary (keeps cuts early)
   - ceil: always extend to next frame boundary (keeps cuts late)
 
+### Planning I/O
+
+- **--plan-out FILE.json**
+  - Write a planning JSON containing beats, selected cuts, derived durations, images used, and key parameters. Useful for reproducible runs and debugging.
+- **--plan-in FILE.json**
+  - Read a planning JSON and render directly from it (skips detection/selection). If images in the plan are missing, falls back to scanning the images_dir.
+
 ### Debug overlays (hardcuts mode)
 
 - **--mark-beats**
@@ -95,7 +107,8 @@ Notes:
 
 ### Safety fallback
 
-- The transitions renderer automatically falls back to hardcuts when any segment pair is too short for a safe crossfade. This prevents broken or mid-frame transitions on rapid cuts.
+- Global fallback: the renderer will fall back to all-hardcuts when every pair is too short for a safe crossfade.
+- Per-segment fallback: during rendering, if an individual boundary is too short for the selected xfade, that boundary is concatenated as a hardcut while other boundaries still use crossfades. This prevents broken transitions on rapid cuts without losing crossfades elsewhere.
 
 ### Audio options
 
@@ -127,6 +140,12 @@ Transitions with on-beat overlays (every other beat) and guard near transitions:
 PYTHONPATH=src python3 -m slideshow_maker.cli.beatslides song.mp3 ./images \
   --transition fade --xfade 0.6 --align midpoint --phase -0.03 \
   --beat-mult 2 --overlay-guard 0.08 --frame-quantize floor --debug
+```
+
+Save plan then render from plan:
+```bash
+PYTHONPATH=src python3 -m slideshow_maker.cli.beatslides song.mp3 ./images --preset music-video --plan-out plan.json
+PYTHONPATH=src python3 -m slideshow_maker.cli.beatslides song.mp3 ./images --plan-in plan.json --hardcuts --mark-beats --counter
 ```
 
 ### Notes

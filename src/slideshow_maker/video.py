@@ -4,6 +4,7 @@ Video processing for the VRChat Slideshow Maker
 """
 
 import os
+import tempfile
 import random
 import shutil
 from .config import (
@@ -358,18 +359,27 @@ def create_beat_aligned_with_transitions(
     for i in range(1, count):
         curr_d = durations[i]
         td_eff = min(max(0.05, transition_duration), max(0.05, prev_duration - 0.05), max(0.05, curr_d - 0.05))
-        if align == "midpoint":
-            offset = max(0.0, prev_duration - (td_eff / 2.0))
+        if td_eff < min_effective:
+            # Per-segment fallback: no xfade, concatenate next stream directly
+            out_label = f'v{i}'
+            filters.append(f'[{last_label}][s{i}]concat=n=2:v=1:a=0[{out_label}]')
+            # Landing time is still the boundary between segments
+            transition_times.append(prev_duration)
+            last_label = out_label
+            prev_duration = prev_duration + curr_d  # no shortening by xfade
         else:
-            offset = max(0.0, prev_duration - td_eff)
-        out_label = f'v{i}'
-        filters.append(
-            f'[{last_label}][s{i}]xfade=transition={transition_type}:duration={td_eff:.3f}:offset={offset:.3f}[{out_label}]'
-        )
-        # The perceptual on-beat moment is at prev_duration for both align modes
-        transition_times.append(prev_duration)
-        last_label = out_label
-        prev_duration = prev_duration + curr_d - td_eff
+            if align == "midpoint":
+                offset = max(0.0, prev_duration - (td_eff / 2.0))
+            else:
+                offset = max(0.0, prev_duration - td_eff)
+            out_label = f'v{i}'
+            filters.append(
+                f'[{last_label}][s{i}]xfade=transition={transition_type}:duration={td_eff:.3f}:offset={offset:.3f}[{out_label}]'
+            )
+            # The perceptual on-beat moment is at prev_duration for both align modes
+            transition_times.append(prev_duration)
+            last_label = out_label
+            prev_duration = prev_duration + curr_d - td_eff
 
     if count == 1:
         last_label = 's0'
@@ -468,23 +478,53 @@ def create_beat_aligned_with_transitions(
 
     filter_complex = ';'.join(filters)
 
+    # Write complex filter to a temp script file to avoid command-length limits
+    filter_script_path = None
+    try:
+        with tempfile.NamedTemporaryFile('w', suffix='.fffilter', delete=False) as tf:
+            tf.write(filter_complex)
+            filter_script_path = tf.name
+    except Exception:
+        # Fallback to inline if tempfile fails (rare)
+        filter_script_path = None
+
     nvenc_available = detect_nvenc_support()
     enc = get_encoding_params(nvenc_available, fps)
 
-    cmd = (
-        f'ffmpeg -y {" ".join(input_args)} -filter_complex "{filter_complex}" '
-        f'-map [{final_label}] {enc} -pix_fmt yuv420p "{output_file}"'
-    )
-    ok = run_command(cmd, "Beat-aligned transitions", show_output=True, timeout_seconds=300)
+    if filter_script_path:
+        cmd = (
+            f'ffmpeg -y {" ".join(input_args)} -filter_complex_script "{filter_script_path}" '
+            f'-map [{final_label}] {enc} -pix_fmt yuv420p "{output_file}"'
+        )
+        ok = run_command(cmd, "Beat-aligned transitions", show_output=True, timeout_seconds=300)
+    else:
+        cmd = (
+            f'ffmpeg -y {" ".join(input_args)} -filter_complex "{filter_complex}" '
+            f'-map [{final_label}] {enc} -pix_fmt yuv420p "{output_file}"'
+        )
+        ok = run_command(cmd, "Beat-aligned transitions", show_output=True, timeout_seconds=300)
     if ok:
         return True
     # CPU fallback if NVENC path failed
     cpu_enc = get_encoding_params(False, fps)
-    cmd_cpu = (
-        f'ffmpeg -y {" ".join(input_args)} -filter_complex "{filter_complex}" '
-        f'-map [{final_label}] {cpu_enc} -pix_fmt yuv420p "{output_file}"'
-    )
-    return run_command(cmd_cpu, "Beat-aligned transitions (CPU fallback)", show_output=True, timeout_seconds=300)
+    if filter_script_path:
+        cmd_cpu = (
+            f'ffmpeg -y {" ".join(input_args)} -filter_complex_script "{filter_script_path}" '
+            f'-map [{final_label}] {cpu_enc} -pix_fmt yuv420p "{output_file}"'
+        )
+    else:
+        cmd_cpu = (
+            f'ffmpeg -y {" ".join(input_args)} -filter_complex "{filter_complex}" '
+            f'-map [{final_label}] {cpu_enc} -pix_fmt yuv420p "{output_file}"'
+        )
+    ok_cpu = run_command(cmd_cpu, "Beat-aligned transitions (CPU fallback)", show_output=True, timeout_seconds=300)
+    # Cleanup temp filter script
+    try:
+        if filter_script_path:
+            os.remove(filter_script_path)
+    except Exception:
+        pass
+    return ok_cpu
 
 def create_slideshow_chunked(images, output_file, min_duration=DEFAULT_MIN_DURATION, 
                            max_duration=DEFAULT_MAX_DURATION, width=DEFAULT_WIDTH, 

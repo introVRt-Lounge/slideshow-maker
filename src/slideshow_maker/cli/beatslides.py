@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+import json
+import os
 from typing import List
 
 from ..beat_detection import detect_beats
@@ -50,71 +52,155 @@ def main(argv: List[str]) -> int:
     p.add_argument("--counter", action="store_true", default=False, help="Show numeric counter at each beat")
     p.add_argument("--counter-size", type=int, default=36, help="Beat counter font size")
     p.add_argument("--counter-pos", type=str, choices=["tr","tl","br","bl"], default="tr", help="Beat counter position")
-    p.add_argument("--preset", type=str, choices=["music-video"], help="Preset of sensible defaults")
+    p.add_argument("--preset", type=str, choices=["music-video","hypercut","slow-cinematic","documentary","edm-strobe"], help="Preset of sensible defaults")
     p.add_argument("--beat-mult", type=int, default=1, help="Overlay beat multiplier (1=every beat, 2=every other, etc.)")
     p.add_argument("--overlay-phase", type=float, default=0.0, help="Overlay phase offset seconds (advance/retard overlays)")
     p.add_argument("--cut-markers", action="store_true", default=False, help="Draw red tick marks at transition landings")
     p.add_argument("--overlay-guard", type=float, default=0.0, help="Do not pulse/tick within N seconds of a transition")
     p.add_argument("--frame-quantize", type=str, choices=["nearest","floor","ceil"], default="nearest", help="Quantize segment durations to frame grid")
+    p.add_argument("--plan-out", type=str, default=None, help="Write planning JSON to this path")
+    p.add_argument("--plan-in", type=str, default=None, help="Read planning JSON and render from it (skips detection/selection)")
     args = p.parse_args(argv)
 
     # Apply preset defaults early (without clobbering explicit overrides)
-    if args.preset == "music-video":
-        # Sensible defaults
-        preset_align = "midpoint"
-        preset_xfade = 0.6
-        preset_phase = -0.03
-        preset_period = [5.0, 10.0]
-        preset_target = 7.5
+    def _apply_preset(preset_name: str):
+        # Parser defaults snapshot
+        DEF_ALIGN = "midpoint"
+        DEF_XFADE = 0.6
+        DEF_PHASE = -0.03
+        DEF_PERIOD = [5.0, 10.0]
+        DEF_TARGET = 7.5
+        DEF_MIN_GAP = 2.05
+        DEF_QUANT = "nearest"
+        DEF_ALL_BEATS = False
 
-        # Only set when user didn't deviate from parser defaults
-        args.align = args.align if args.align != "midpoint" else preset_align
-        args.xfade = float(args.xfade) if args.xfade != 0.6 else preset_xfade
-        args.phase = float(args.phase) if args.phase != -0.03 else preset_phase
-        args.period = args.period if list(args.period) != [5.0, 10.0] else preset_period
-        args.target = float(args.target) if args.target != 7.5 else preset_target
+        PRESETS = {
+            "music-video": {
+                "align": "midpoint",
+                "xfade": 0.6,
+                "phase": -0.03,
+                "period": [5.0, 10.0],
+                "target": 7.5,
+                "quantize": "nearest",
+            },
+            "hypercut": {
+                # Aggressive, near-every-beat style
+                "align": "end",
+                "xfade": 0.25,
+                "phase": -0.01,
+                "period": [0.7, 2.0],
+                "target": 1.2,
+                "quantize": "floor",
+                "all_beats": True,
+            },
+            "slow-cinematic": {
+                # Long holds with soft transitions
+                "align": "midpoint",
+                "xfade": 1.2,
+                "phase": -0.01,
+                "period": [8.0, 16.0],
+                "target": 12.0,
+                "quantize": "nearest",
+            },
+            "documentary": {
+                # Moderate holds, subtle fades, keep cuts slightly early
+                "align": "end",
+                "xfade": 0.3,
+                "phase": 0.0,
+                "period": [6.0, 12.0],
+                "target": 9.0,
+                "quantize": "floor",
+            },
+            "edm-strobe": {
+                # Fast, beat-driven with short xfades or hardcuts
+                "align": "midpoint",
+                "xfade": 0.3,
+                "phase": -0.02,
+                "period": [0.5, 1.2],
+                "target": 0.75,
+                "quantize": "nearest",
+                "all_beats": True,
+            },
+        }
+
+        spec = PRESETS.get(preset_name)
+        if not spec:
+            return
+
+        # Only set when user left parser defaults
+        args.align = args.align if args.align != DEF_ALIGN else spec.get("align", DEF_ALIGN)
+        args.xfade = float(args.xfade) if args.xfade != DEF_XFADE else float(spec.get("xfade", DEF_XFADE))
+        args.phase = float(args.phase) if args.phase != DEF_PHASE else float(spec.get("phase", DEF_PHASE))
+        args.period = args.period if list(args.period) != DEF_PERIOD else list(spec.get("period", DEF_PERIOD))
+        args.target = float(args.target) if args.target != DEF_TARGET else float(spec.get("target", DEF_TARGET))
+        # Quantize applies to renderer; set when default
+        args.frame_quantize = (
+            args.frame_quantize if args.frame_quantize != DEF_QUANT else str(spec.get("quantize", DEF_QUANT))
+        )
+        # Optional all-beats for hypercut/edm; set only if user didn't ask otherwise
+        if spec.get("all_beats") and args.all_beats == DEF_ALL_BEATS:
+            args.all_beats = True
 
         # Ensure min-gap is safe for the chosen xfade (>= 2*xfade + 0.05)
         try:
-            args.min_gap = max(float(args.min_gap), 2.0 * float(args.xfade) + 0.05)
+            args.min_gap = max(float(args.min_gap if hasattr(args, "min_gap") else DEF_MIN_GAP), 2.0 * float(args.xfade) + 0.05)
         except Exception:
             args.min_gap = 2.0 * float(args.xfade) + 0.05
 
-    beats = detect_beats(args.audio)
-    if not beats:
-        print("No beats detected", file=sys.stderr)
-        return 1
+    if args.preset:
+        _apply_preset(args.preset)
 
-    if args.debug:
-        print(f"Detected beats ({len(beats)}):")
-        print(", ".join(f"{b:.3f}" for b in beats[:50]) + ("..." if len(beats) > 50 else ""))
+    plan = None
+    if args.plan_in:
+        try:
+            with open(args.plan_in, "r") as f:
+                plan = json.load(f)
+        except Exception as e:
+            print(f"Failed to read plan JSON: {e}", file=sys.stderr)
+            return 10
 
-    if args.audio_end is None:
-        # Use true audio duration when available; fallback to last beat + target
-        audio_end = get_audio_duration(args.audio) or (beats[-1] + args.target)
+    if plan is not None:
+        beats = plan.get("beats", [])
+        cuts = plan.get("cuts", [])
+        durations = plan.get("durations", [])
+        if args.debug:
+            print(f"Loaded plan: beats={len(beats)} cuts={len(cuts)} durations={len(durations)}")
     else:
-        audio_end = float(args.audio_end)
-    # If you want a short preview, use --max-seconds. Omit it for full video
-    if args.max_seconds is not None:
-        audio_end = min(audio_end, float(args.max_seconds))
+        beats = detect_beats(args.audio)
+        if not beats:
+            print("No beats detected", file=sys.stderr)
+            return 1
 
-    period_min, period_max = float(args.period[0]), float(args.period[1])
-    if args.all_beats:
-        # Use every beat from the first beat onward up to audio_end
-        cuts = [b for b in beats if b <= audio_end]
-    else:
-        cuts = select_beats(
-            beats,
-            audio_end=audio_end,
-            period_min=period_min,
-            period_max=period_max,
-            target_period=args.target,
-            strict=bool(args.strict),
-            grace=float(args.grace),
-            min_cut_gap=float(args.min_gap),
-            phase=float(args.phase),
-            strategy="nearest",
-        )
+        if args.debug:
+            print(f"Detected beats ({len(beats)}):")
+            print(", ".join(f"{b:.3f}" for b in beats[:50]) + ("..." if len(beats) > 50 else ""))
+
+        if args.audio_end is None:
+            # Use true audio duration when available; fallback to last beat + target
+            audio_end = get_audio_duration(args.audio) or (beats[-1] + args.target)
+        else:
+            audio_end = float(args.audio_end)
+        # If you want a short preview, use --max-seconds. Omit it for full video
+        if args.max_seconds is not None:
+            audio_end = min(audio_end, float(args.max_seconds))
+
+        period_min, period_max = float(args.period[0]), float(args.period[1])
+        if args.all_beats:
+            # Use every beat from the first beat onward up to audio_end
+            cuts = [b for b in beats if b <= audio_end]
+        else:
+            cuts = select_beats(
+                beats,
+                audio_end=audio_end,
+                period_min=period_min,
+                period_max=period_max,
+                target_period=args.target,
+                strict=bool(args.strict),
+                grace=float(args.grace),
+                min_cut_gap=float(args.min_gap),
+                phase=float(args.phase),
+                strategy="nearest",
+            )
 
     # Compute durations from cuts relative to start
     if not cuts:
@@ -125,25 +211,30 @@ def main(argv: List[str]) -> int:
         print(f"Selected cuts ({len(cuts)}):")
         print(", ".join(f"{c:.3f}" for c in cuts[:50]) + ("..." if len(cuts) > 50 else ""))
 
-    # Build absolute segment durations from t=0 to each cut
-    durations = []
-    if cuts:
-        last = 0.0
-        for c in cuts:
-            if c <= last:
-                continue
-            durations.append(max(0.05, c - last))
-            last = c
-        # Add a short tail (half target) to close the video
-        durations.append(max(0.2, args.target * 0.5))
+    # Build absolute segment durations from t=0 to each cut unless plan provides them
+    if not plan or not durations:
+        durations = []
+        if cuts:
+            last = 0.0
+            for c in cuts:
+                if c <= last:
+                    continue
+                durations.append(max(0.05, c - last))
+                last = c
+            # Add a short tail (half target) to close the video
+            durations.append(max(0.2, args.target * 0.5))
 
     # Map images
-    import os, glob
+    import glob
     exts = ["*.png", "*.jpg", "*.jpeg"]
     images = []
-    for e in exts:
-        images.extend(glob.glob(os.path.join(args.images_dir, e)))
-    images = sorted(images)
+    plan_images = (plan.get("images") if plan else None) or []
+    if plan_images:
+        images = [p for p in plan_images if os.path.exists(p)]
+    if not images:
+        for e in exts:
+            images.extend(glob.glob(os.path.join(args.images_dir, e)))
+        images = sorted(images)
     if not images:
         print("No images found", file=sys.stderr)
         return 3
@@ -212,6 +303,35 @@ def main(argv: List[str]) -> int:
     if not ok:
         return 4
     print(f"✅ Created {out_file} with {len(images)} images and {len(durations)} segments")
+
+    # Write planning JSON if requested
+    if args.plan_out:
+        try:
+            plan_payload = {
+                "audio": args.audio,
+                "images_dir": args.images_dir,
+                "images": images,
+                "beats": beats,
+                "cuts": cuts,
+                "durations": durations,
+                "params": {
+                    "align": args.align,
+                    "xfade": float(args.xfade),
+                    "phase": float(args.phase),
+                    "period": [float(args.period[0]), float(args.period[1])],
+                    "target": float(args.target),
+                    "grace": float(args.grace),
+                    "min_gap": float(args.min_gap),
+                    "hardcuts": bool(args.hardcuts),
+                    "transition": args.transition,
+                    "quantize": args.frame_quantize,
+                },
+            }
+            with open(args.plan_out, "w") as f:
+                json.dump(plan_payload, f, indent=2)
+            print(f"📝 Wrote plan JSON -> {args.plan_out}")
+        except Exception as e:
+            print(f"Warning: failed to write plan JSON: {e}", file=sys.stderr)
 
     if not args.no_audio:
         # First ensure we have an AAC audio file to mux (MP3-in-MP4 can be flaky)
