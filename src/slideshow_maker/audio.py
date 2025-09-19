@@ -61,9 +61,9 @@ def combine_video_audio(video_file, audio_file, output_file):
     # Copy audio to keep original quality.
     cmd = (
         f'ffmpeg -y -stream_loop -1 -i "{video_file}" -i "{audio_file}" '
-        f'-t {audio_duration:.3f} -map 0:v:0 -map 1:a:0 '
+        f'-map 0:v:0 -map 1:a:0 '
         f'-c:v libx264 -r 25 -crf 23 -preset ultrafast -pix_fmt yuv420p '
-        f'-c:a copy -shortest "{output_file}"'
+        f'-c:a aac -b:a {AUDIO_BITRATE} -shortest "{output_file}"'
     )
     return run_command(cmd, f"Combining video and audio (duration: {audio_duration:.1f}s)", timeout_seconds=600)
 
