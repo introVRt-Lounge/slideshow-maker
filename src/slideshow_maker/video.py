@@ -524,6 +524,7 @@ def create_beat_aligned_with_transitions(
             break
     if too_short:
         print("⚠️ Segments too short for safe xfade; falling back to hard cuts.")
+        # Preserve overlays/masks/counters in fallback path
         return create_slideshow_with_durations(
             images,
             durations,
@@ -531,12 +532,28 @@ def create_beat_aligned_with_transitions(
             width=width,
             height=height,
             fps=fps,
+            quantize=quantize,
+            visualize_cuts=bool(mark_transitions or mark_cuts),
+            marker_duration=marker_duration,
+            beat_markers=overlay_beats,
+            pulse_beats=overlay_beats if pulse else None,
+            pulse_duration=pulse_duration,
+            pulse_saturation=pulse_saturation,
+            pulse_brightness=pulse_brightness,
+            pulse_bloom=bloom,
+            pulse_bloom_sigma=bloom_sigma,
+            pulse_bloom_duration=bloom_duration,
+            counter_beats=counter_beats,
+            counter_fontsize=counter_fontsize,
+            counter_position=counter_position,
+            mask_scope=mask_scope,
         )
 
     # Guard against pathological memory/arg size with extremely many segments
     # For very high segment counts, prefer hardcuts for stability
     if count > 120:
         print(f"⚠️ Too many segments for a single-pass xfade chain ({count}); falling back to hard cuts for stability.")
+        # Preserve overlays/masks/counters in fallback path
         return create_slideshow_with_durations(
             images,
             durations,
@@ -544,6 +561,21 @@ def create_beat_aligned_with_transitions(
             width=width,
             height=height,
             fps=fps,
+            quantize=quantize,
+            visualize_cuts=bool(mark_transitions or mark_cuts),
+            marker_duration=marker_duration,
+            beat_markers=overlay_beats,
+            pulse_beats=overlay_beats if pulse else None,
+            pulse_duration=pulse_duration,
+            pulse_saturation=pulse_saturation,
+            pulse_brightness=pulse_brightness,
+            pulse_bloom=bloom,
+            pulse_bloom_sigma=bloom_sigma,
+            pulse_bloom_duration=bloom_duration,
+            counter_beats=counter_beats,
+            counter_fontsize=counter_fontsize,
+            counter_position=counter_position,
+            mask_scope=mask_scope,
         )
 
     # Build ffmpeg inputs: looped stills with explicit -t (and optional masks)
