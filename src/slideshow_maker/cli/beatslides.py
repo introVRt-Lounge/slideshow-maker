@@ -235,6 +235,12 @@ def main(argv: List[str]) -> int:
             for e in exts:
                 images.extend(glob.glob(os.path.join(args.images_dir, e)))
             images = sorted(images)
+        # Exclude masks (precomputed or generated) from consideration
+        def _is_mask_path(p: str) -> bool:
+            pl = p.lower()
+            base = os.path.basename(pl)
+            return ("_mask" in base) or (os.sep + "masks" + os.sep in pl)
+        images = [p for p in images if not _is_mask_path(p)]
         if not images:
             print("No images found", file=sys.stderr)
             return 3
