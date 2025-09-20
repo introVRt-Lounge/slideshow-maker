@@ -339,14 +339,14 @@ def main(argv: List[str]) -> int:
                 print(f"Warning: failed to write plan JSON: {e}", file=sys.stderr)
 
         if not args.no_audio:
-            # Avoid re-writing the same merged file when one_audio_path is already AUDIO_OUTPUT
-            processed_audio = (
-                one_audio_path if os.path.abspath(one_audio_path) == os.path.abspath(AUDIO_OUTPUT) else AUDIO_OUTPUT
-            )
-            if processed_audio == AUDIO_OUTPUT:
+            # If audio was pre-merged upstream, skip merge here to avoid in-place rewrite
+            if os.path.abspath(one_audio_path) == os.path.abspath(AUDIO_OUTPUT):
+                processed_audio = one_audio_path
+            else:
                 if not audio_mod.merge_audio([one_audio_path], AUDIO_OUTPUT):
                     print("Warning: failed to prepare audio track; leaving video without audio", file=sys.stderr)
                     return 0
+                processed_audio = AUDIO_OUTPUT
             final_with_audio = "beat_aligned_with_audio.mp4"
             if not audio_mod.combine_video_audio(out_file, processed_audio, final_with_audio):
                 print("Warning: failed to mux audio; leaving video without audio", file=sys.stderr)
