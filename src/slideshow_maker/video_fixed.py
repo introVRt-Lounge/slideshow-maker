@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import shutil
 from typing import List, Optional
+import json
 
 from .config import DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_FPS
 from .utils import run_command
@@ -44,6 +45,52 @@ def create_slideshow_with_durations(
     if temp_dir is None:
         temp_dir = ".slideshow_tmp"
     os.makedirs(temp_dir, exist_ok=True)
+
+    # Persist and compare render parameters to support safe resume
+    params_path = os.path.join(temp_dir, "params.json")
+    current_params = {
+        "width": int(width),
+        "height": int(height),
+        "fps": int(fps),
+        "quantize": str(quantize),
+        "mask_scope": str(mask_scope),
+        "visualize_cuts": bool(visualize_cuts),
+        "marker_duration": float(marker_duration),
+        "pulse": bool(bool(pulse_beats)),
+        "pulse_duration": float(pulse_duration),
+        "pulse_saturation": float(pulse_saturation),
+        "pulse_brightness": float(pulse_brightness),
+        "pulse_bloom": bool(pulse_bloom),
+        "pulse_bloom_sigma": float(pulse_bloom_sigma),
+        "pulse_bloom_duration": float(pulse_bloom_duration),
+        "counter": bool(bool(counter_beats)),
+        "counter_fontsize": int(counter_fontsize),
+        "counter_position": str(counter_position),
+    }
+    previous_params = None
+    try:
+        if os.path.exists(params_path):
+            with open(params_path, "r") as pf:
+                previous_params = json.load(pf)
+    except Exception:
+        previous_params = None
+    if previous_params is not None and previous_params != current_params:
+        # Parameters changed - purge stale clips to avoid mismatched overlays
+        try:
+            for name in os.listdir(temp_dir):
+                if name.startswith("clip_") and name.endswith(".mp4"):
+                    try:
+                        os.remove(os.path.join(temp_dir, name))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    # Write current params (idempotent)
+    try:
+        with open(params_path, "w") as pf:
+            json.dump(current_params, pf)
+    except Exception:
+        pass
 
     count = min(len(images), len(durations))
     images = images[:count]
@@ -344,6 +391,16 @@ def create_slideshow_with_durations(
                 f'ffmpeg -y -loop 1 -i "{img}" -t {float(dur):.3f} '
                 f'-vf "{vf_filter}" -frames:v {frames} -c:v libx264 -r {fps} -preset ultrafast -pix_fmt yuv420p "{clip_path}"'
             )
+        # Resume: skip re-encoding if clip already exists with non-zero size
+        try:
+            if os.path.exists(clip_path) and os.path.getsize(clip_path) > 0:
+                print(f"  ⏭️  Clip {i+1}/{count} exists - skipping")
+                temp_clips.append(clip_path)
+                elapsed += float(dur)
+                continue
+        except Exception:
+            pass
+
         if not run_command(cmd, f"Clip {i+1}/{count} ({dur:.2f}s)", timeout_seconds=120):
             return False
         temp_clips.append(clip_path)
