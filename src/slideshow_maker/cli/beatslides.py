@@ -12,11 +12,12 @@ import argparse
 import sys
 import json
 import os
+import multiprocessing
 from typing import List
 
 from ..beat_detection import detect_beats
 from ..beat_selection import select_beats
-from ..video import create_slideshow_with_durations
+from ..video_fixed import create_slideshow_with_durations
 from .. import audio as audio_mod
 from ..config import AUDIO_OUTPUT
 from ..utils import get_audio_duration
@@ -65,7 +66,17 @@ def main(argv: List[str]) -> int:
     p.add_argument("--fallback-dur", type=float, default=0.06, help="Duration of per-boundary fallback effect")
     p.add_argument("--mask-scope", type=str, choices=["none","foreground","background"], default="none", help="Restrict pulse/bloom to foreground or background using rembg mask")
     p.add_argument("--per-audio", action="store_true", default=False, help="Render one video per audio file (when audio is a dir or 'auto')")
+    p.add_argument("--workers", type=int, default=None, help="Number of parallel clip encoders (auto = CPU cores, 0 = disable parallel)")
     args = p.parse_args(argv)
+    if args.debug:
+        try:
+            import inspect
+            from .. import video_fixed as _vf
+            from .. import background_removal as _br
+            print(f"DEBUG using video_fixed from: {inspect.getsourcefile(_vf) or 'unknown'}")
+            print(f"DEBUG using background_removal from: {inspect.getsourcefile(_br) or 'unknown'}")
+        except Exception as _e:
+            print(f"DEBUG import path check failed: {_e}")
 
     # Apply preset defaults early (without clobbering explicit overrides)
     def _apply_preset(preset_name: str):
@@ -166,6 +177,7 @@ def main(argv: List[str]) -> int:
 
     def _render_for_audio(one_audio_path: str) -> int:
         nonlocal args, plan
+        print(f"DEBUG: Entered _render_for_audio, hardcuts={args.hardcuts}")
         if plan is not None:
             beats = plan.get("beats", [])
             cuts = plan.get("cuts", [])
@@ -245,6 +257,21 @@ def main(argv: List[str]) -> int:
             print("No images found", file=sys.stderr)
             return 3
 
+        # If masking is requested, require masks to exist in images/masks
+        if args.mask_scope in ("foreground", "background"):
+            def _mask_path_for(img_path: str) -> str:
+                fname = os.path.basename(img_path)
+                stem, _ = os.path.splitext(fname)
+                return os.path.join(os.path.dirname(img_path), "masks", f"{stem}_mask.png")
+            masked = [p for p in images if os.path.exists(_mask_path_for(p))]
+            if args.debug:
+                print(f"DEBUG maskscope={args.mask_scope} images_with_masks={len(masked)}/{len(images)}")
+            if masked:
+                images = masked
+            else:
+                print("Warning: mask-scope requested but no masks found; continuing without masking for this run", file=sys.stderr)
+                args.mask_scope = "none"
+
         # Loop images if fewer than segments
         if len(images) < len(durations):
             reps = (len(durations) + len(images) - 1) // len(images)
@@ -253,7 +280,65 @@ def main(argv: List[str]) -> int:
             images = images[: len(durations)]
 
         out_file = "beat_aligned.mp4"
+
+        # Auto-detect optimal workers based on CPU cores (for both hardcuts and transitions)
+        print(f"DEBUG: args.workers before auto-detect: {args.workers}")
+        if args.workers is None:
+            cpu_count = multiprocessing.cpu_count()
+            # Reserve 1-2 cores for system, use up to 75% of available cores
+            optimal_workers = max(1, int(cpu_count * 0.75))
+            # Override with env var if set
+            if os.environ.get("SSM_MAX_WORKERS"):
+                optimal_workers = min(optimal_workers, int(os.environ["SSM_MAX_WORKERS"]))
+            args.workers = optimal_workers
+            print(f"🎯 Auto-detected {cpu_count} CPU cores, using {optimal_workers} workers")
+        elif args.workers == 0:
+            args.workers = 1  # Minimum 1 worker
+        print(f"DEBUG: args.workers after auto-detect: {args.workers}")
+
         if args.hardcuts:
+
+            # Precompute masks in parallel if using mask scope
+            if args.mask_scope != "none":
+                print("🎭 Precomputing masks in parallel...")
+                try:
+                    from ..background_removal import BackgroundRemover
+                    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+                    remover = BackgroundRemover()  # Auto-detect GPU/CPU
+                    mask_dir = os.path.join(args.images_dir, "masks")
+                    os.makedirs(mask_dir, exist_ok=True)
+
+                    # Find images that need masks
+                    mask_tasks = []
+                    for img in images:
+                        name = os.path.splitext(os.path.basename(img))[0]
+                        mask_path = os.path.join(mask_dir, f"{name}_mask.png")
+                        if not os.path.exists(mask_path):
+                            mask_tasks.append((img, mask_path))
+
+                    if mask_tasks:
+                        print(f"📸 Generating {len(mask_tasks)} missing masks...")
+                        with ThreadPoolExecutor(max_workers=min(args.workers, len(mask_tasks))) as executor:
+                            futures = {executor.submit(remover.create_mask, img, mask_path): (img, mask_path)
+                                     for img, mask_path in mask_tasks}
+                            for future in as_completed(futures):
+                                img, mask_path = futures[future]
+                                try:
+                                    result = future.result()
+                                    if result:
+                                        print(f"✅ Mask created: {os.path.basename(mask_path)}")
+                                    else:
+                                        print(f"❌ Failed: {os.path.basename(img)}")
+                                except Exception as e:
+                                    print(f"❌ Error creating mask for {os.path.basename(img)}: {e}")
+                        print("🎭 Mask precomputation complete!")
+                    else:
+                        print("🎭 All masks already exist, skipping precomputation")
+
+                except Exception as e:
+                    print(f"⚠️ Mask precomputation failed, continuing without: {e}")
+
             beat_markers = beats if args.mark_beats else None
             pulse_beats = beats if args.pulse else None
             ok = create_slideshow_with_durations(
@@ -261,7 +346,7 @@ def main(argv: List[str]) -> int:
                 durations,
                 out_file,
                 quantize=args.frame_quantize,
-                visualize_cuts=args.debug,
+                visualize_cuts=bool(args.cut_markers),
                 beat_markers=beat_markers,
                 pulse_beats=pulse_beats,
                 pulse_duration=float(args.pulse_dur),
@@ -274,6 +359,7 @@ def main(argv: List[str]) -> int:
                 counter_fontsize=int(args.counter_size),
                 counter_position=str(args.counter_pos),
                 mask_scope=str(args.mask_scope),
+                workers=int(args.workers),
             )
         else:
             try:
@@ -290,7 +376,8 @@ def main(argv: List[str]) -> int:
                 transition_duration=float(args.xfade),
                 min_effective=float(args.xfade_min),
                 align=args.align,
-                mark_transitions=bool(args.debug or args.mark_beats),
+                # do not force white debug bar unless explicitly asked
+                mark_transitions=bool(args.mark_beats),
                 marker_duration=0.12,
                 pulse=bool(args.pulse),
                 pulse_duration=float(args.pulse_dur),
@@ -310,6 +397,7 @@ def main(argv: List[str]) -> int:
                 counter_fontsize=int(args.counter_size),
                 counter_position=str(args.counter_pos),
                 mask_scope=str(args.mask_scope),
+                workers=int(args.workers),
             )
             if not ok:
                 return 4
@@ -345,8 +433,8 @@ def main(argv: List[str]) -> int:
                 print(f"Warning: failed to write plan JSON: {e}", file=sys.stderr)
 
         if not args.no_audio:
-            # If audio was pre-merged upstream, skip merge here to avoid in-place rewrite
-            if os.path.abspath(one_audio_path) == os.path.abspath(AUDIO_OUTPUT):
+            # If audio was pre-merged upstream, or a single explicit file path, skip merge
+            if (os.path.abspath(one_audio_path) == os.path.abspath(AUDIO_OUTPUT)) or os.path.isfile(one_audio_path):
                 processed_audio = one_audio_path
             else:
                 if not audio_mod.merge_audio([one_audio_path], AUDIO_OUTPUT):
@@ -382,10 +470,14 @@ def main(argv: List[str]) -> int:
                         pass
             return rc
         else:
-            if not audio_mod.merge_audio(audio_files, AUDIO_OUTPUT):
-                print("Failed to merge audio", file=sys.stderr)
-                return 6
-            code = _render_for_audio(AUDIO_OUTPUT)
+            # If exactly one audio file, skip merge and use directly
+            if len(audio_files) == 1:
+                code = _render_for_audio(audio_files[0])
+            else:
+                if not audio_mod.merge_audio(audio_files, AUDIO_OUTPUT):
+                    print("Failed to merge audio", file=sys.stderr)
+                    return 6
+                code = _render_for_audio(AUDIO_OUTPUT)
             if code == 0:
                 try:
                     os.rename("beat_aligned_with_audio.mp4", "beat_aligned_merged.mp4")

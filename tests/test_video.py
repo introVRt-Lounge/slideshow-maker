@@ -32,7 +32,7 @@ class TestVideo:
         test_image.write_bytes(b"fake png data")
         output_file = tmp_path / "output.mp4"
         
-        with patch('slideshow_maker.video.run_command') as mock_run:
+        with patch('slideshow_maker.video_chunked.run_command') as mock_run:
             mock_run.return_value = True
             
             result = create_slideshow([str(test_image)], str(output_file))
@@ -57,7 +57,7 @@ class TestVideo:
         
         output_file = tmp_path / "output.mp4"
         
-        with patch('slideshow_maker.video.create_slideshow_chunked') as mock_chunked:
+        with patch('slideshow_maker.video_chunked.create_slideshow_chunked') as mock_chunked:
             mock_chunked.return_value = True
             
             result = create_slideshow(test_images, str(output_file))
@@ -75,7 +75,7 @@ class TestVideo:
         test_image.write_bytes(b"fake png data")
         output_file = tmp_path / "output.mp4"
         
-        with patch('slideshow_maker.video.run_command') as mock_run, \
+        with patch('slideshow_maker.video_chunked.run_command') as mock_run, \
              patch('slideshow_maker.utils.get_available_transitions') as mock_get_transitions, \
              patch('os.makedirs'), \
              patch('os.path.exists') as mock_exists, \
@@ -98,7 +98,7 @@ class TestVideo:
         
         output_file = tmp_path / "output.mp4"
         
-        with patch('slideshow_maker.video.run_command') as mock_run, \
+        with patch('slideshow_maker.video_chunked.run_command') as mock_run, \
              patch('slideshow_maker.utils.get_available_transitions') as mock_get_transitions:
             mock_run.return_value = True
             mock_get_transitions.return_value = (['fade', 'wipeleft'], {'cpu_transitions_supported': True})
@@ -122,7 +122,7 @@ class TestVideo:
         test_image.write_bytes(b"fake png data")
         output_file = tmp_path / "output.mp4"
         
-        with patch('slideshow_maker.video.run_command') as mock_run, \
+        with patch('slideshow_maker.video_chunked.run_command') as mock_run, \
              patch('slideshow_maker.utils.get_available_transitions') as mock_get_transitions:
             mock_run.return_value = False
             mock_get_transitions.return_value = (['fade', 'wipeleft'], {'cpu_transitions_supported': True})
@@ -140,7 +140,7 @@ class TestVideo:
         
         output_file = tmp_path / "output.mp4"
         
-        with patch('slideshow_maker.video.run_command') as mock_run, \
+        with patch('slideshow_maker.video_chunked.run_command') as mock_run, \
              patch('slideshow_maker.utils.get_available_transitions') as mock_get_transitions:
             mock_run.return_value = True
             mock_get_transitions.return_value = (['fade', 'wipeleft'], {'cpu_transitions_supported': True})
@@ -166,7 +166,7 @@ class TestVideo:
         
         output_file = tmp_path / "output.mp4"
         
-        with patch('slideshow_maker.video.run_command') as mock_run:
+        with patch('slideshow_maker.video_chunked.run_command') as mock_run:
             mock_run.return_value = True
             
             with patch('os.makedirs'):
@@ -189,7 +189,7 @@ class TestVideo:
         
         output_file = tmp_path / "output.mp4"
         
-        with patch('slideshow_maker.video.run_command') as mock_run:
+        with patch('slideshow_maker.video_chunked.run_command') as mock_run:
             mock_run.return_value = True
             
             with patch('os.makedirs'):
@@ -210,7 +210,7 @@ class TestVideo:
         test_image.write_bytes(b"fake png data")
         output_file = tmp_path / "output.mp4"
         
-        with patch('slideshow_maker.video.run_command') as mock_run:
+        with patch('slideshow_maker.video_chunked.run_command') as mock_run:
             mock_run.return_value = True
             
             with patch('os.makedirs'):
@@ -230,7 +230,7 @@ class TestVideo:
         
         output_file = tmp_path / "output.mp4"
         
-        with patch('slideshow_maker.video.run_command') as mock_run:
+        with patch('slideshow_maker.video_chunked.run_command') as mock_run:
             mock_run.return_value = True
             
             with patch('os.makedirs'):

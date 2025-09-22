@@ -11,7 +11,7 @@ from typing import List, Optional
 
 from .config import (
     DEFAULT_MIN_DURATION, DEFAULT_MAX_DURATION, DEFAULT_WIDTH, DEFAULT_HEIGHT,
-    DEFAULT_FPS, DEFAULT_CRF, DEFAULT_PRESET, DEFAULT_CHUNK_SIZE, TEMP_DIR
+    DEFAULT_FPS, DEFAULT_CRF, DEFAULT_PRESET, DEFAULT_CHUNK_SIZE, DEFAULT_TRANSITION_DURATION, TEMP_DIR
 )
 from .utils import run_command, get_image_info, get_available_transitions, print_ffmpeg_capabilities, detect_nvenc_support
 

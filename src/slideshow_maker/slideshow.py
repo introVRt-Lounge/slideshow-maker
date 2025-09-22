@@ -200,7 +200,7 @@ def create_slideshow_with_audio(image_dir, test_mode=False, dry_run=False, min_d
         cmd = f'ffmpeg -y -i "{AUDIO_OUTPUT}" -t 60 -c copy "{test_audio}"'
         from .utils import run_command
         if run_command(cmd, "Creating 60-second test audio clip"):
-            if not combine_video_audio(VIDEO_OUTPUT, test_audio, FINAL_OUTPUT):
+            if not audio_mod.combine_video_audio(VIDEO_OUTPUT, test_audio, FINAL_OUTPUT):
                 print("❌ Test audio combination failed!")
                 return False
             # Clean up test audio

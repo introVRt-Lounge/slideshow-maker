@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import shutil
 from typing import List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 
 from .config import DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_FPS
@@ -37,6 +38,7 @@ def create_slideshow_with_durations(
     counter_position: str = "tr",
     cut_markers: Optional[List[float]] = None,
     mask_scope: str = "none",
+    workers: int = 1,
 ) -> bool:
     if len(images) == 0:
         print("No images found!")
@@ -100,25 +102,29 @@ def create_slideshow_with_durations(
     print(f"🎬 Creating fixed-duration clips for {count} images...")
 
     # Optional foreground/background masks via rembg
-    masks: List[str] = []
-    use_masks = False
-    if mask_scope in ("foreground", "background"):
-        import os as _os
-        if not _os.environ.get("PYTEST_CURRENT_TEST"):
-            try:
-                from .background_removal import BackgroundRemover  # type: ignore
-                remover = BackgroundRemover()
-                if remover.is_available():
-                    for img in images:
-                        m = remover.create_mask(img, None)
-                        masks.append(m)
-                    if all(bool(m) for m in masks) and len(masks) == len(images):
-                        use_masks = True
-            except Exception:
-                use_masks = False
+    # Build per-image mask paths if available (precomputed upfront)
+    masks: List[Optional[str]] = [None] * len(images)
+    use_masks = mask_scope in ("foreground", "background")
+    if use_masks:
+        for idx, img in enumerate(images):
+            filename = os.path.basename(img)
+            name_no_ext, _ = os.path.splitext(filename)
+            mask_path = os.path.join(os.path.dirname(img), "masks", f"{name_no_ext}_mask.png")
+            if os.path.exists(mask_path):
+                masks[idx] = mask_path
+            # NOTE: Masks should be precomputed upfront, no inline generation here
 
-    elapsed = 0.0
-    for i, (img, dur) in enumerate(zip(images, durations)):
+    # Precompute elapsed per clip to support parallel command construction
+    elapsed_prefix: List[float] = []
+    acc = 0.0
+    for d in durations:
+        elapsed_prefix.append(acc)
+        acc += float(d)
+
+    def _build_cmd(i: int, img: str, dur_in: float, elapsed_in: float) -> tuple[str, str, float, int]:
+        """Return (cmd, clip_path, dur, frames) for clip i."""
+        dur = dur_in
+        # Quantize duration to exact frame count to keep cuts on frame boundaries
         if quantize == "floor":
             frames = max(1, int(float(dur) * fps))
         elif quantize == "ceil":
@@ -141,11 +147,11 @@ def create_slideshow_with_durations(
         if beat_markers:
             try:
                 for bt in beat_markers:
-                    if bt < elapsed:
+                    if bt < elapsed_in:
                         continue
-                    if bt >= elapsed + dur:
+                    if bt >= elapsed_in + dur:
                         break
-                    rel_t = max(0.0, bt - elapsed)
+                    rel_t = max(0.0, bt - elapsed_in)
                     vf_parts.append(
                         f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=white@1.0:t=fill:enable='between(t,{rel_t:.3f},{(rel_t+marker_duration):.3f})'"
                     )
@@ -155,11 +161,11 @@ def create_slideshow_with_durations(
         if cut_markers:
             try:
                 for ct in cut_markers:
-                    if ct <= elapsed:
+                    if ct <= elapsed_in:
                         continue
-                    if ct > elapsed + dur:
+                    if ct > elapsed_in + dur:
                         break
-                    rel_t = max(0.0, ct - elapsed)
+                    rel_t = max(0.0, ct - elapsed_in)
                     rel_t = min(max(0.0, rel_t - 0.02), max(0.0, dur - 0.02))
                     vf_parts.append(
                         f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=red@1.0:t=fill:enable='between(t,{rel_t:.3f},{(rel_t+marker_duration):.3f})'"
@@ -167,29 +173,30 @@ def create_slideshow_with_durations(
             except Exception:
                 pass
 
-        if pulse_beats and pulse_duration > 0 and (pulse_saturation > 1.0 or pulse_brightness != 0.0):
+        # NOTE: Do not apply pulse on the base chain when using masks; masked branch will handle it
+        if (pulse_beats and pulse_duration > 0 and (pulse_saturation > 1.0 or pulse_brightness != 0.0)) and not (use_masks and masks[i]):
             try:
                 for bt in pulse_beats:
-                    if bt < elapsed:
+                    if bt < elapsed_in:
                         continue
-                    if bt >= elapsed + dur:
+                    if bt >= elapsed_in + dur:
                         break
-                    rel_t = max(0.0, bt - elapsed)
+                    rel_t = max(0.0, bt - elapsed_in)
                     vf_parts.append(
                         f"eq=saturation={float(pulse_saturation):.3f}:brightness={float(pulse_brightness):.3f}:enable='between(t,{rel_t:.3f},{(rel_t+pulse_duration):.3f})'"
                     )
             except Exception:
                 pass
 
-        if pulse_bloom and pulse_bloom_duration > 0 and pulse_bloom_sigma > 0:
+        if (pulse_bloom and pulse_bloom_duration > 0 and pulse_bloom_sigma > 0) and not (use_masks and masks[i]):
             try:
                 beats_for_bloom = pulse_beats or beat_markers or []
                 for bt in beats_for_bloom:
-                    if bt < elapsed:
+                    if bt < elapsed_in:
                         continue
-                    if bt >= elapsed + dur:
+                    if bt >= elapsed_in + dur:
                         break
-                    rel_t = max(0.0, bt - elapsed)
+                    rel_t = max(0.0, bt - elapsed_in)
                     vf_parts.append(
                         f"gblur=sigma={float(pulse_bloom_sigma):.2f}:steps=1:enable='between(t,{rel_t:.3f},{(rel_t+pulse_bloom_duration):.3f})'"
                     )
@@ -202,7 +209,7 @@ def create_slideshow_with_durations(
                 count_before = 0
                 first_idx_in_clip = None
                 for idx_b, b in enumerate(beats_in_order):
-                    if b < elapsed:
+                    if b < elapsed_in:
                         count_before += 1
                     else:
                         first_idx_in_clip = idx_b
@@ -217,7 +224,7 @@ def create_slideshow_with_durations(
                     x_expr = "20"; y_expr = "h-th-20"
                 first_rel = None
                 if first_idx_in_clip is not None and first_idx_in_clip < len(beats_in_order):
-                    first_rel = max(0.0, beats_in_order[first_idx_in_clip] - elapsed)
+                    first_rel = max(0.0, beats_in_order[first_idx_in_clip] - elapsed_in)
                 if count_before > 0 and first_rel is not None and first_rel > 0:
                     prev_idx = count_before
                     vf_parts.append(
@@ -227,14 +234,14 @@ def create_slideshow_with_durations(
                     )
                 local_beats: List[float] = []
                 for bt in beats_in_order:
-                    if bt < elapsed:
+                    if bt < elapsed_in:
                         continue
-                    if bt >= elapsed + dur:
+                    if bt >= elapsed_in + dur:
                         break
                     local_beats.append(bt)
                 for j, bt in enumerate(local_beats):
-                    rel_t = max(0.0, bt - elapsed)
-                    rel_next = dur if j + 1 >= len(local_beats) else max(0.0, local_beats[j + 1] - elapsed)
+                    rel_t = max(0.0, bt - elapsed_in)
+                    rel_next = dur if j + 1 >= len(local_beats) else max(0.0, local_beats[j + 1] - elapsed_in)
                     idx = count_before + j + 1
                     vf_parts.append(
                         "drawtext=fontfile='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'"
@@ -248,18 +255,18 @@ def create_slideshow_with_durations(
             pre = ",".join([
                 f"scale={width}:{height}:force_original_aspect_ratio=decrease",
                 f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
-                "format=yuv420p",
+                "format=rgba",
             ])
             # Build effect-only chain on a split branch
             effect_chain_parts: List[str] = []
             if pulse_beats and pulse_duration > 0 and (pulse_saturation > 1.0 or pulse_brightness != 0.0):
                 try:
                     for bt in pulse_beats:
-                        if bt < elapsed:
+                        if bt < elapsed_in:
                             continue
-                        if bt >= elapsed + dur:
+                        if bt >= elapsed_in + dur:
                             break
-                        rel_t = max(0.0, bt - elapsed)
+                        rel_t = max(0.0, bt - elapsed_in)
                         effect_chain_parts.append(
                             f"eq=saturation={float(pulse_saturation):.3f}:brightness={float(pulse_brightness):.3f}:enable='between(t,{rel_t:.3f},{(rel_t+pulse_duration):.3f})'"
                         )
@@ -269,11 +276,11 @@ def create_slideshow_with_durations(
                 try:
                     beats_for_bloom = pulse_beats or beat_markers or []
                     for bt in beats_for_bloom:
-                        if bt < elapsed:
+                        if bt < elapsed_in:
                             continue
-                        if bt >= elapsed + dur:
+                        if bt >= elapsed_in + dur:
                             break
-                        rel_t = max(0.0, bt - elapsed)
+                        rel_t = max(0.0, bt - elapsed_in)
                         effect_chain_parts.append(
                             f"gblur=sigma={float(pulse_bloom_sigma):.2f}:steps=1:enable='between(t,{rel_t:.3f},{(rel_t+pulse_bloom_duration):.3f})'"
                         )
@@ -287,11 +294,11 @@ def create_slideshow_with_durations(
             if beat_markers:
                 try:
                     for bt in beat_markers:
-                        if bt < elapsed:
+                        if bt < elapsed_in:
                             continue
-                        if bt >= elapsed + dur:
+                        if bt >= elapsed_in + dur:
                             break
-                        rel_t = max(0.0, bt - elapsed)
+                        rel_t = max(0.0, bt - elapsed_in)
                         post_chain_parts.append(
                             f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=white@1.0:t=fill:enable='between(t,{rel_t:.3f},{(rel_t+marker_duration):.3f})'"
                         )
@@ -300,11 +307,11 @@ def create_slideshow_with_durations(
             if cut_markers:
                 try:
                     for ct in cut_markers:
-                        if ct <= elapsed:
+                        if ct <= elapsed_in:
                             continue
-                        if ct > elapsed + dur:
+                        if ct > elapsed_in + dur:
                             break
-                        rel_t = max(0.0, ct - elapsed)
+                        rel_t = max(0.0, ct - elapsed_in)
                         rel_t = min(max(0.0, rel_t - 0.02), max(0.0, dur - 0.02))
                         post_chain_parts.append(
                             f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=red@1.0:t=fill:enable='between(t,{rel_t:.3f},{(rel_t+marker_duration):.3f})'"
@@ -317,7 +324,7 @@ def create_slideshow_with_durations(
                     count_before = 0
                     first_idx_in_clip = None
                     for idx_b, b in enumerate(beats_in_order):
-                        if b < elapsed:
+                        if b < elapsed_in:
                             count_before += 1
                         else:
                             first_idx_in_clip = idx_b
@@ -332,7 +339,7 @@ def create_slideshow_with_durations(
                         x_expr = "20"; y_expr = "h-th-20"
                     first_rel = None
                     if first_idx_in_clip is not None and first_idx_in_clip < len(beats_in_order):
-                        first_rel = max(0.0, beats_in_order[first_idx_in_clip] - elapsed)
+                        first_rel = max(0.0, beats_in_order[first_idx_in_clip] - elapsed_in)
                     if count_before > 0 and first_rel is not None and first_rel > 0:
                         prev_idx = count_before
                         post_chain_parts.append(
@@ -342,14 +349,14 @@ def create_slideshow_with_durations(
                         )
                     local_beats: List[float] = []
                     for bt in beats_in_order:
-                        if bt < elapsed:
+                        if bt < elapsed_in:
                             continue
-                        if bt >= elapsed + dur:
+                        if bt >= elapsed_in + dur:
                             break
                         local_beats.append(bt)
                     for j2, bt in enumerate(local_beats):
-                        rel_t = max(0.0, bt - elapsed)
-                        rel_next = dur if j2 + 1 >= len(local_beats) else max(0.0, local_beats[j2 + 1] - elapsed)
+                        rel_t = max(0.0, bt - elapsed_in)
+                        rel_next = dur if j2 + 1 >= len(local_beats) else max(0.0, local_beats[j2 + 1] - elapsed_in)
                         idx_label = count_before + j2 + 1
                         post_chain_parts.append(
                             "drawtext=fontfile='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'"
@@ -362,17 +369,25 @@ def create_slideshow_with_durations(
             eff = ",".join(effect_chain_parts) if effect_chain_parts else None
             post = ",".join(post_chain_parts) if post_chain_parts else None
 
+            # Prepare mask branch; invert for background
+            # Build mask chain, label at end to avoid invalid relabeling
             mask_process = (
-                f"[1:v]scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,format=gray[m]"
+                f"[1:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,format=gray"
             )
             if mask_scope == "background":
-                mask_process = mask_process + ",negate,format=gray[m]"
+                mask_process += ",negate"
+            mask_process += "[m]"
 
+            # Use alphamerge + overlay to apply effect only where mask alpha is present
             fc_parts = [
                 f"[0:v]{pre},split=2[b][e]",
                 (f"[e]{eff}[ee]" if eff else "[e]copy[ee]"),
                 mask_process,
-                "[b][ee][m]maskedmerge[mm]",
+                "[b]format=rgba[br]",
+                "[ee]format=rgba[er]",
+                "[er][m]alphamerge[ea]",
+                "[br][ea]overlay=shortest=1[mm]",
             ]
             map_label = "[mm]"
             if post:
@@ -391,20 +406,53 @@ def create_slideshow_with_durations(
                 f'ffmpeg -y -loop 1 -i "{img}" -t {float(dur):.3f} '
                 f'-vf "{vf_filter}" -frames:v {frames} -c:v libx264 -r {fps} -preset ultrafast -pix_fmt yuv420p "{clip_path}"'
             )
-        # Resume: skip re-encoding if clip already exists with non-zero size
-        try:
-            if os.path.exists(clip_path) and os.path.getsize(clip_path) > 0:
-                print(f"  ⏭️  Clip {i+1}/{count} exists - skipping")
-                temp_clips.append(clip_path)
-                elapsed += float(dur)
-                continue
-        except Exception:
-            pass
+        return cmd, clip_path, float(dur), frames
 
-        if not run_command(cmd, f"Clip {i+1}/{count} ({dur:.2f}s)", timeout_seconds=120):
-            return False
-        temp_clips.append(clip_path)
-        elapsed += float(dur)
+    # Parallel or serial execution
+    if workers and workers > 1:
+        tasks: List[tuple[int, str, str, float, int]] = []
+        for idx, (img, dur) in enumerate(zip(images, durations)):
+            cmd, clip_path, dur_q, frames = _build_cmd(idx, img, float(dur), elapsed_prefix[idx])
+            tasks.append((idx, cmd, clip_path, dur_q, frames))
+        # Submit tasks
+        with ThreadPoolExecutor(max_workers=int(workers)) as executor:
+            future_map = {}
+            for idx, cmd, clip_path, dur_q, _ in tasks:
+                # Resume skip
+                try:
+                    if os.path.exists(clip_path) and os.path.getsize(clip_path) > 0:
+                        print(f"  ⏭️  Clip {idx+1}/{count} exists - skipping")
+                        temp_clips.append(clip_path)
+                        continue
+                except Exception:
+                    pass
+                future = executor.submit(run_command, cmd, f"Clip {idx+1}/{count} ({dur_q:.2f}s)", False, 120)
+                future_map[future] = clip_path
+            # Collect
+            for future in as_completed(future_map):
+                ok = future.result()
+                if not ok:
+                    return False
+                temp_clips.append(future_map[future])
+        # Ensure ordering by index
+        temp_clips = [t[2] for t in sorted(tasks, key=lambda x: x[0])]
+    else:
+        elapsed = 0.0
+        for i, (img, dur) in enumerate(zip(images, durations)):
+            cmd, clip_path, dur_q, _frames = _build_cmd(i, img, float(dur), elapsed)
+            # Resume: skip re-encoding if clip already exists with non-zero size
+            try:
+                if os.path.exists(clip_path) and os.path.getsize(clip_path) > 0:
+                    print(f"  ⏭️  Clip {i+1}/{count} exists - skipping")
+                    temp_clips.append(clip_path)
+                    elapsed += float(dur_q)
+                    continue
+            except Exception:
+                pass
+            if not run_command(cmd, f"Clip {i+1}/{count} ({dur_q:.2f}s)", timeout_seconds=120):
+                return False
+            temp_clips.append(clip_path)
+            elapsed += float(dur_q)
 
     if len(temp_clips) == 1:
         os.rename(temp_clips[0], output_file)

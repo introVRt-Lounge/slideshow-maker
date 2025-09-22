@@ -27,9 +27,9 @@ def merge_audio(audio_files, output_file):
         return False
 
     if len(audio_files) == 1:
-        # Single audio file - just copy/convert
+        # Single audio file - just copy/convert (allow long encodes)
         cmd = f'ffmpeg -y -i "{audio_files[0]}" -c:a {AUDIO_CODEC} -b:a {AUDIO_BITRATE} "{output_file}"'
-        return run_command(cmd, f"Processing single audio file: {os.path.basename(audio_files[0])}")
+        return run_command(cmd, f"Processing single audio file: {os.path.basename(audio_files[0])}", timeout_seconds=600)
 
     # Multiple audio files - concatenate
     concat_file = "audio_concat.txt"
@@ -38,7 +38,7 @@ def merge_audio(audio_files, output_file):
             f.write(f"file '{audio}'\n")
 
     cmd = f'ffmpeg -y -f concat -safe 0 -i "{concat_file}" -c:a {AUDIO_CODEC} -b:a {AUDIO_BITRATE} "{output_file}"'
-    success = run_command(cmd, f"Merging {len(audio_files)} audio files")
+    success = run_command(cmd, f"Merging {len(audio_files)} audio files", timeout_seconds=600)
 
     # Clean up
     try:
