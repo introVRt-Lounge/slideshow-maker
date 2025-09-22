@@ -15,6 +15,7 @@ from .config import (
 )
 from .utils import run_command, detect_nvenc_support
 from .video_chunked import get_encoding_params  # reuse helper
+from .video_fixed import create_slideshow_with_durations as create_hardcuts
 
 
 def create_slideshow_with_durations(
@@ -42,6 +43,13 @@ def create_slideshow_with_durations(
     cut_markers: Optional[List[float]] = None,
     mask_scope: str = "none",
     workers: int = 1,
+    transition_duration: float = DEFAULT_TRANSITION_DURATION,
+    min_effective: float = 0.25,
+    align: str = "midpoint",
+    fallback_style: str = "none",
+    fallback_duration: float = 0.05,
+    transition_type: str = "fade",
+    overlay_beats=None,
 ) -> bool:
     """Create a slideshow with xfade transitions aligned to beat-planned segment durations.
 
@@ -435,6 +443,7 @@ def create_beat_aligned_with_transitions(
     overlay_phase: float = 0.0,
     overlay_guard_seconds: float = 0.0,
     mark_cuts: bool = False,
+    cut_markers: Optional[List[float]] = None,
     # numeric counter overlay
     counter_beats=None,
     counter_fontsize: int = 36,
@@ -481,7 +490,7 @@ def create_beat_aligned_with_transitions(
     if too_short:
         print("⚠️ Segments too short for safe xfade; falling back to hard cuts.")
         # Preserve overlays/masks/counters in fallback path
-        return create_slideshow_with_durations(
+        return create_hardcuts(
             images,
             durations,
             output_file,
@@ -502,6 +511,7 @@ def create_beat_aligned_with_transitions(
             counter_beats=counter_beats,
             counter_fontsize=counter_fontsize,
             counter_position=counter_position,
+            cut_markers=cut_markers,
             mask_scope=mask_scope,
             workers=workers,
         )

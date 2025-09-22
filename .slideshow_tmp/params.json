@@ -1,0 +1,1 @@
+{"width": 1920, "height": 1080, "fps": 25, "quantize": "nearest", "mask_scope": "none", "visualize_cuts": false, "marker_duration": 0.12, "pulse": false, "pulse_duration": 0.08, "pulse_saturation": 1.25, "pulse_brightness": 0.0, "pulse_bloom": false, "pulse_bloom_sigma": 8.0, "pulse_bloom_duration": 0.08, "counter": false, "counter_fontsize": 36, "counter_position": "tr"}
