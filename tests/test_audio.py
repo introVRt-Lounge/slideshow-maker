@@ -35,9 +35,10 @@ class TestAudio:
         (tmp_path / "test4.txt").write_text("not audio")
         
         audio_files = find_audio_files(str(tmp_path))
-        assert len(audio_files) == 2  # Should return max 2 files
+        assert len(audio_files) == 3  # Should return all audio files found
         assert any("test1.mp3" in f for f in audio_files)
         assert any("test2.m4a" in f for f in audio_files)
+        assert any("test3.wav" in f for f in audio_files)
     
     def test_find_audio_files_sorted(self, tmp_path):
         """Test that find_audio_files returns sorted files"""
@@ -123,7 +124,8 @@ class TestAudio:
                 # Check that the command contains expected elements
                 call_args = mock_run.call_args[0]
                 assert "ffmpeg" in call_args[0]
-                assert "120.5" in call_args[0]
+                assert "-stream_loop -1" in call_args[0]
+                assert "libx264" in call_args[0]
     
     def test_combine_video_audio_no_duration(self, tmp_path):
         """Test combine_video_audio when audio duration cannot be determined"""

@@ -1,0 +1,48 @@
+---
+alwaysApply: false
+description: Windows desktop host info and path mappings for remote runs
+---
+
+# Windows Desktop ("desktop") SSH & Path Mappings
+
+- Host alias: `desktop`
+  - Configured in `~/.ssh/config` as:
+
+```text
+Host desktop
+  HostName 192.168.86.101
+  User HeavyGee
+  Port 22
+  IdentitiesOnly yes
+  IdentityFile ~/.ssh/id_rsa
+  ServerAliveInterval 30
+  ServerAliveCountMax 4
+```
+
+- Typical project location on Windows: `H:\Users\HeavyGee\Documents\heavygee\slideshow-maker`
+
+- Network drive mapping notes:
+  - `Z:` is a mapped drive pointing to the Linux server's `/home/heavygee`
+  - `W:` is a mapped drive pointing to the Linux server's `/mnt/completed`
+  - These mappings may not appear in non-interactive sessions. If they are missing over SSH:
+    - Use UNC paths directly (e.g., `\\server\share`), or
+    - Run commands in an interactive session, or
+    - Use PowerShell to create temporary PSDrives within the session.
+
+- Example remote run (PowerShell via SSH):
+
+```powershell
+ssh desktop "powershell -NoProfile -Command '
+cd H:\\Users\\HeavyGee\\Documents\\heavygee\\slideshow-maker;
+$env:PYTHONPATH = "src";
+python -m slideshow_maker.cli.beatslides auto H:\\paths\\to\\images --preset music-video
+'"
+```
+
+- When W:/Z: are required but not present in the SSH session, create session-scoped mappings:
+
+```powershell
+New-PSDrive -Name W -PSProvider FileSystem -Root \\linux-host\completed -Scope Global | Out-Null
+New-PSDrive -Name Z -PSProvider FileSystem -Root \\linux-host\home -Scope Global | Out-Null
+```
+

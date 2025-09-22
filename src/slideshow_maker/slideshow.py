@@ -22,7 +22,12 @@ def find_images(directory):
     for ext in IMAGE_EXTENSIONS:
         pattern = os.path.join(directory, ext)
         all_images.extend(glob.glob(pattern))
-    return sorted(all_images)
+    # Exclude mask artifacts (both *_mask.* and images under /masks/ subdir)
+    def _is_mask_path(p: str) -> bool:
+        pl = p.lower()
+        base = os.path.basename(pl)
+        return ("_mask" in base) or (os.sep + "masks" + os.sep in pl)
+    return sorted([p for p in all_images if not _is_mask_path(p)])
 
 
 def calculate_slides_needed(audio_duration, min_duration, max_duration, test_mode=False):
@@ -195,7 +200,7 @@ def create_slideshow_with_audio(image_dir, test_mode=False, dry_run=False, min_d
         cmd = f'ffmpeg -y -i "{AUDIO_OUTPUT}" -t 60 -c copy "{test_audio}"'
         from .utils import run_command
         if run_command(cmd, "Creating 60-second test audio clip"):
-            if not combine_video_audio(VIDEO_OUTPUT, test_audio, FINAL_OUTPUT):
+            if not audio_mod.combine_video_audio(VIDEO_OUTPUT, test_audio, FINAL_OUTPUT):
                 print("❌ Test audio combination failed!")
                 return False
             # Clean up test audio

@@ -3,8 +3,8 @@ from unittest import mock
 from slideshow_maker.video import create_beat_aligned_with_transitions
 
 
-@mock.patch("slideshow_maker.video.run_command")
-@mock.patch("slideshow_maker.video.detect_nvenc_support", return_value=False)
+@mock.patch("slideshow_maker.utils.run_command")
+@mock.patch("slideshow_maker.utils.detect_nvenc_support", return_value=False)
 def test_per_segment_fallback_hardcuts(mock_nvenc, mock_run):
     # Simulate ffmpeg success for concat path
     mock_run.return_value = True

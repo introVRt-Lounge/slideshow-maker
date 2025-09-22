@@ -3,7 +3,7 @@ from unittest import mock
 from slideshow_maker.video import create_slideshow_with_durations, create_beat_aligned_with_transitions
 
 
-@mock.patch("slideshow_maker.video.run_command", return_value=True)
+@mock.patch("slideshow_maker.utils.run_command", return_value=True)
 def test_counter_persists_across_clips(mock_run):
     images = [f"img_{i}.png" for i in range(3)]
     durations = [1.0, 1.0, 1.0]
@@ -19,8 +19,8 @@ def test_counter_persists_across_clips(mock_run):
     assert ok is True
 
 
-@mock.patch("slideshow_maker.video.run_command", return_value=True)
-@mock.patch("slideshow_maker.video.detect_nvenc_support", return_value=False)
+@mock.patch("slideshow_maker.utils.run_command", return_value=True)
+@mock.patch("slideshow_maker.utils.detect_nvenc_support", return_value=False)
 def test_overlay_guard_suppresses_near_landings(mock_nvenc, mock_run):
     images = [f"img_{i}.png" for i in range(2)]
     durations = [1.0, 1.0]

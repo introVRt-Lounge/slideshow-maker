@@ -48,29 +48,42 @@ def show_progress(current, total, image_path=None, transition=None):
         print(f"\r{status_line}", end="", flush=True)
 
 
+def _safe_print(msg: str):
+    try:
+        print(msg)
+    except Exception:
+        try:
+            # Fallback to ASCII if console encoding can't handle emojis
+            print(msg.encode("ascii", errors="ignore").decode("ascii"))
+        except Exception:
+            pass
+
 def run_command(cmd, description="", show_output=False, timeout_seconds: int = 15):
     """Run a command and return True if successful. Hard timeout to avoid hangs."""
     try:
         # Optional escape hatch for local dev only (not used in test suite by default)
         if os.environ.get("SSM_NO_SUBPROC"):
             if show_output:
-                print(f"⚡ {description}")
+                _safe_print(f"⚡ {description}")
             else:
-                print(f"⚙️  {description} ✅")
+                _safe_print(f"⚙️  {description} ✅")
             return True
         # During pytest, avoid spawning heavy ffmpeg/ffprobe commands
         if os.environ.get("PYTEST_CURRENT_TEST") and (
             (isinstance(cmd, str) and ("ffmpeg" in cmd or "ffprobe" in cmd))
         ):
             if show_output:
-                print(f"⚡ {description}")
+                _safe_print(f"⚡ {description}")
             else:
-                print(f"⚙️  {description} ✅")
+                _safe_print(f"⚙️  {description} ✅")
             return True
         if show_output:
-            print(f"⚡ {description}")
+            _safe_print(f"⚡ {description}")
         else:
-            print(f"⚙️  {description}", end="", flush=True)
+            try:
+                print(f"⚙️  {description}", end="", flush=True)
+            except Exception:
+                print(f"{description}", end="", flush=True)
 
         result = subprocess.run(
             cmd,
@@ -82,14 +95,17 @@ def run_command(cmd, description="", show_output=False, timeout_seconds: int = 1
         )
 
         if not show_output:
-            print(" ✅" if result.returncode == 0 else " ❌")
+            try:
+                print(" ✅" if result.returncode == 0 else " ❌")
+            except Exception:
+                print(" ok" if result.returncode == 0 else " fail")
 
         return True
     except subprocess.TimeoutExpired:
-        print(" ⏱️ timeout")
+        _safe_print(" ⏱️ timeout")
         return False
     except subprocess.CalledProcessError as e:
-        print(f"❌ Error: {e}")
+        _safe_print(f"❌ Error: {e}")
         if show_output and e.output:
             print(f"Output: {e.output}")
         return False
@@ -238,6 +254,9 @@ def get_available_transitions():
 
 def detect_nvenc_support():
     """Detect if NVENC hardware encoding is available"""
+    # Allow explicit override to force CPU-only encoding
+    if os.environ.get("SSM_DISABLE_NVENC"):
+        return False
     # Avoid probing during unit tests to prevent external calls
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return False

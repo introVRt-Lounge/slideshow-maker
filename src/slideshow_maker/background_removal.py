@@ -27,20 +27,30 @@ class BackgroundRemover:
             gpu_acceleration: Whether to attempt GPU acceleration (falls back to CPU)
         """
         self.session = None
-        self.gpu_acceleration = gpu_acceleration and REMBG_AVAILABLE
+        # Honor env override to force CPU on Windows runs
+        force_cpu = os.environ.get("REMBG_CPU_ONLY") == "1"
+        self.gpu_acceleration = (not force_cpu) and gpu_acceleration and REMBG_AVAILABLE
 
         if REMBG_AVAILABLE:
             try:
-                if gpu_acceleration:
-                    # Try GPU first, fallback to CPU
-                    self.session = new_session(providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-                    providers = self.session.inner_session.get_providers()
-                    if 'CUDAExecutionProvider' in providers:
-                        print("🎨 Background removal: GPU acceleration enabled")
-                    else:
-                        print("🎨 Background removal: GPU requested but CPU fallback active")
+                providers_to_use = ['CPUExecutionProvider']
+                if self.gpu_acceleration:
+                    try:
+                        import onnxruntime as ort  # type: ignore
+                        avail = set(getattr(ort, 'get_available_providers', lambda: [])())
+                        if 'CUDAExecutionProvider' in avail:
+                            providers_to_use = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+                        else:
+                            self.gpu_acceleration = False
+                    except Exception:
+                        # If ORT probe fails, stick to CPU to avoid noisy CUDA errors
+                        self.gpu_acceleration = False
+                        providers_to_use = ['CPUExecutionProvider']
+                self.session = new_session(providers=providers_to_use)
+                providers = self.session.inner_session.get_providers()
+                if 'CUDAExecutionProvider' in providers:
+                    print("🎨 Background removal: GPU acceleration enabled")
                 else:
-                    self.session = new_session(providers=['CPUExecutionProvider'])
                     print("🎨 Background removal: CPU mode")
             except Exception as e:
                 print(f"⚠️  Failed to initialize background remover: {e}")
@@ -121,10 +131,24 @@ class BackgroundRemover:
                 # Get mask only
                 mask = remove(img, session=self.session, only_mask=True)
 
-                # Generate output path
+                # Generate output path in a 'masks' subfolder next to the image
                 if output_path is None:
-                    base, ext = os.path.splitext(image_path)
-                    output_path = f"{base}_mask.png"
+                    base_dir = os.path.dirname(image_path)
+                    filename = os.path.basename(image_path)
+                    name_no_ext, _ = os.path.splitext(filename)
+                    mask_dir = os.path.join(base_dir, "masks")
+                    try:
+                        os.makedirs(mask_dir, exist_ok=True)
+                    except Exception:
+                        pass
+                    output_path = os.path.join(mask_dir, f"{name_no_ext}_mask.png")
+                # Skip regeneration if it already exists
+                try:
+                    if output_path and os.path.exists(output_path):
+                        print(f"🎭 Mask exists, skipping: {output_path}")
+                        return output_path
+                except Exception:
+                    pass
 
                 # Save mask
                 if isinstance(mask, np.ndarray):
