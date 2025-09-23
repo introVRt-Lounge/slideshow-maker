@@ -141,14 +141,23 @@ def create_slideshow_chunked(images: List[str], output_file: str, min_duration: 
                     if transition_type is None:
                         # Fallback to a safe transition
                         transition_type = 'fade'
-                    # Calculate safe offset - never negative
-                    safe_offset = max(0, duration - DEFAULT_TRANSITION_DURATION)
+                    # Get actual clip durations to calculate proper transition timing
+                    from .utils import get_audio_duration
+                    prev_duration = get_audio_duration(prev_clip)  # Reusing audio function for video duration
+                    curr_duration = get_audio_duration(curr_clip)
+
+                    # Calculate transition parameters
+                    transition_duration = min(DEFAULT_TRANSITION_DURATION, prev_duration, curr_duration)
+                    # Transition starts when the first clip has 'transition_duration' seconds left
+                    safe_offset = max(0, prev_duration - transition_duration)
+                    # Total output duration = time until transition + transition duration + remaining of second clip
+                    total_duration = safe_offset + transition_duration + max(0, curr_duration - transition_duration)
 
                     if capabilities['gpu_transitions_supported']:
-                        cmd = f'ffmpeg -y -init_hw_device opencl=ocl:0.0 -filter_hw_device ocl -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v]format=rgba,hwupload=extra_hw_frames=16[0hw];[1:v]format=rgba,hwupload=extra_hw_frames=16[1hw];[0hw][1hw]xfade_opencl=transition={transition_type}:duration={DEFAULT_TRANSITION_DURATION}:offset={safe_offset:.1f},hwdownload,format=yuv420p" -c:v libx264 -r {fps} -crf {DEFAULT_CRF} -preset {DEFAULT_PRESET} -t {duration:.1f} "{transition_file}"'
+                        cmd = f'ffmpeg -y -init_hw_device opencl=ocl:0.0 -filter_hw_device ocl -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v]format=rgba,hwupload=extra_hw_frames=16[0hw];[1:v]format=rgba,hwupload=extra_hw_frames=16[1hw];[0hw][1hw]xfade_opencl=transition={transition_type}:duration={transition_duration:.1f}:offset={safe_offset:.1f},hwdownload,format=yuv420p" -c:v libx264 -r {fps} -crf {DEFAULT_CRF} -preset {DEFAULT_PRESET} -t {total_duration:.1f} "{transition_file}"'
                     else:
                         encoding_params = get_encoding_params(nvenc_available, fps)
-                        cmd = f'ffmpeg -y -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v][1:v]xfade=transition={transition_type}:duration={DEFAULT_TRANSITION_DURATION}:offset={safe_offset:.1f}" {encoding_params} -t {duration:.1f} "{transition_file}"'
+                        cmd = f'ffmpeg -y -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v][1:v]xfade=transition={transition_type}:duration={transition_duration:.1f}:offset={safe_offset:.1f}" {encoding_params} -t {total_duration:.1f} "{transition_file}"'
 
                     print(f"      🔄 {transition_type.upper()} transition command: {cmd}")
                     ok_t = run_command(cmd, f"    {transition_type.upper()} transition {j}/{len(temp_clips)-1}", show_output=True)
@@ -159,12 +168,12 @@ def create_slideshow_chunked(images: List[str], output_file: str, min_duration: 
                         if capabilities['gpu_transitions_supported'] and capabilities['cpu_transitions_supported']:
                             print(f"      ⚠️ OpenCL transition failed, trying CPU fallback...")
                             encoding_params = get_encoding_params(nvenc_available, fps)
-                            cpu_cmd = f'ffmpeg -y -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v][1:v]xfade=transition={transition_type}:duration={DEFAULT_TRANSITION_DURATION}:offset={safe_offset:.1f}" {encoding_params} -t {duration:.1f} "{transition_file}"'
+                            cpu_cmd = f'ffmpeg -y -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v][1:v]xfade=transition={transition_type}:duration={transition_duration:.1f}:offset={safe_offset:.1f}" {encoding_params} -t {total_duration:.1f} "{transition_file}"'
                             ok_cpu = run_command(cpu_cmd, f"    CPU fallback {transition_type.upper()} transition {j}/{len(temp_clips)-1}", show_output=True)
                             if not ok_cpu and nvenc_available:
                                 # Try forced libx264 if NVENC path in encoding_params failed
                                 cpu_params2 = get_encoding_params(False, fps)
-                                cpu_cmd2 = f'ffmpeg -y -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v][1:v]xfade=transition={transition_type}:duration={DEFAULT_TRANSITION_DURATION}:offset={safe_offset:.1f}" {cpu_params2} -t {duration:.1f} "{transition_file}"'
+                                cpu_cmd2 = f'ffmpeg -y -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v][1:v]xfade=transition={transition_type}:duration={transition_duration:.1f}:offset={safe_offset:.1f}" {cpu_params2} -t {total_duration:.1f} "{transition_file}"'
                                 ok_cpu = run_command(cpu_cmd2, f"    CPU fallback-2 {transition_type.upper()} transition {j}/{len(temp_clips)-1}", show_output=True)
                             if ok_cpu:
                                 transition_clips.append(transition_file)
