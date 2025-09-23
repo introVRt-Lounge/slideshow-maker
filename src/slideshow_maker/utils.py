@@ -274,8 +274,12 @@ def detect_nvenc_support():
         test_cmd = f'"{ffmpeg_path}" -y -f lavfi -i "color=black:size=32x32:duration=0.1" -c:v h264_nvenc -f null - 2>&1'
         test_result = subprocess.run(test_cmd, shell=True, capture_output=True, text=True, timeout=5)
 
+        # Check both stdout and stderr for CUDA errors
+        combined_output = test_result.stdout + test_result.stderr
+        cuda_error = "Cannot load libcuda.so.1" in combined_output
+
         # If the test succeeds (no CUDA errors), NVENC is truly available
-        if test_result.returncode == 0 and "Cannot load libcuda.so.1" not in test_result.stderr:
+        if test_result.returncode == 0 and not cuda_error:
             return True
 
     except Exception:

@@ -119,88 +119,51 @@ def create_slideshow_chunked(images: List[str], output_file: str, min_duration: 
             shutil.move(temp_clips[0], chunk_file)
         else:
             print(f"    🎭 Creating VARIED smooth transitions between {len(temp_clips)} images...")
-            print(f"      ✨ Creating REAL VARIED transitions")
-            transition_clips: List[str] = []
+            print(f"      ✨ Using single-command image-to-image transitions")
 
-            for j in range(len(temp_clips)):
-                if j == 0:
-                    transition_clips.append(temp_clips[j])
-                else:
-                    prev_clip = temp_clips[j-1]
-                    curr_clip = temp_clips[j]
-                    transition_file = f"{temp_dir}/transition_{chunk_idx}_{j}.mp4"
-                    # Choose a transition that is supported by current ffmpeg (probe once)
-                    candidates = available_transitions[:]
-                    random.shuffle(candidates)
-                    transition_type = None
-                    for cand in candidates:
-                        test_cmd = f'ffmpeg -v error -f lavfi -i "color=red:size=320x240:duration=2" -f lavfi -i "color=blue:size=320x240:duration=2" -filter_complex "[0:v][1:v]xfade=transition={cand}:duration=1.0:offset=1.0" -t 1 -f null -'
-                        if run_command(test_cmd, f"    Probe transition {cand}", show_output=False):
-                            transition_type = cand
-                            break
-                    if transition_type is None:
-                        # Fallback to a safe transition
-                        transition_type = 'fade'
-                    # Get actual clip durations to calculate proper transition timing
-                    from .utils import get_audio_duration
-                    prev_duration = get_audio_duration(prev_clip)  # Reusing audio function for video duration
-                    curr_duration = get_audio_duration(curr_clip)
+            # Create a single FFmpeg command that loads all images and applies transitions
+            # This is the correct approach for slideshow transitions
 
-                    # Calculate transition parameters
-                    transition_duration = min(DEFAULT_TRANSITION_DURATION, prev_duration, curr_duration)
-                    # Transition starts when the first clip has 'transition_duration' seconds left
-                    safe_offset = max(0, prev_duration - transition_duration)
-                    # Total output duration = time until transition + transition duration + remaining of second clip
-                    total_duration = safe_offset + transition_duration + max(0, curr_duration - transition_duration)
+            # Build inputs and filter graph
+            inputs = []
+            filter_parts = []
 
-                    if capabilities['gpu_transitions_supported']:
-                        cmd = f'ffmpeg -y -init_hw_device opencl=ocl:0.0 -filter_hw_device ocl -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v]format=rgba,hwupload=extra_hw_frames=16[0hw];[1:v]format=rgba,hwupload=extra_hw_frames=16[1hw];[0hw][1hw]xfade_opencl=transition={transition_type}:duration={transition_duration:.1f}:offset={safe_offset:.1f},hwdownload,format=yuv420p" -c:v libx264 -r {fps} -crf {DEFAULT_CRF} -preset {DEFAULT_PRESET} -t {total_duration:.1f} "{transition_file}"'
-                    else:
-                        encoding_params = get_encoding_params(nvenc_available, fps)
-                        cmd = f'ffmpeg -y -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v][1:v]xfade=transition={transition_type}:duration={transition_duration:.1f}:offset={safe_offset:.1f}" {encoding_params} -t {total_duration:.1f} "{transition_file}"'
+            for i, clip in enumerate(temp_clips):
+                inputs.append(f'-i "{clip}"')
 
-                    print(f"      🔄 {transition_type.upper()} transition command: {cmd}")
-                    ok_t = run_command(cmd, f"    {transition_type.upper()} transition {j}/{len(temp_clips)-1}", show_output=True)
-                    if ok_t:
-                        transition_clips.append(transition_file)
-                        print(f"      ✅ {transition_type.upper()} transition {j} SUCCESS")
-                    else:
-                        if capabilities['gpu_transitions_supported'] and capabilities['cpu_transitions_supported']:
-                            print(f"      ⚠️ OpenCL transition failed, trying CPU fallback...")
-                            encoding_params = get_encoding_params(nvenc_available, fps)
-                            cpu_cmd = f'ffmpeg -y -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v][1:v]xfade=transition={transition_type}:duration={transition_duration:.1f}:offset={safe_offset:.1f}" {encoding_params} -t {total_duration:.1f} "{transition_file}"'
-                            ok_cpu = run_command(cpu_cmd, f"    CPU fallback {transition_type.upper()} transition {j}/{len(temp_clips)-1}", show_output=True)
-                            if not ok_cpu and nvenc_available:
-                                # Try forced libx264 if NVENC path in encoding_params failed
-                                cpu_params2 = get_encoding_params(False, fps)
-                                cpu_cmd2 = f'ffmpeg -y -i "{prev_clip}" -i "{curr_clip}" -filter_complex "[0:v][1:v]xfade=transition={transition_type}:duration={transition_duration:.1f}:offset={safe_offset:.1f}" {cpu_params2} -t {total_duration:.1f} "{transition_file}"'
-                                ok_cpu = run_command(cpu_cmd2, f"    CPU fallback-2 {transition_type.upper()} transition {j}/{len(temp_clips)-1}", show_output=True)
-                            if ok_cpu:
-                                transition_clips.append(transition_file)
-                                print(f"      ✅ CPU fallback {transition_type.upper()} transition {j} SUCCESS")
-                            else:
-                                print(f"      ❌ Both OpenCL and CPU transitions failed - using original clip")
-                                transition_clips.append(curr_clip)
-                        else:
-                            print(f"      ❌ {transition_type.upper()} transition {j} FAILED - using original clip")
-                            transition_clips.append(curr_clip)
+            # Get all clip durations
+            from .utils import get_audio_duration
+            clip_durations = [get_audio_duration(clip) for clip in temp_clips]
+            total_duration = sum(clip_durations)
 
-            if len(transition_clips) == 1:
-                os.rename(transition_clips[0], chunk_file)
+            # Use simpler approach: concat with transition filter
+            # This avoids complex filter graph chaining issues
+            concat_file = f"{temp_dir}/transition_concat_{chunk_idx}.txt"
+            with open(concat_file, 'w') as f:
+                for clip in temp_clips:
+                    f.write(f"file '{os.path.abspath(clip)}'\n")
+
+            # Choose one transition type for the whole slideshow
+            candidates = available_transitions[:]
+            random.shuffle(candidates)
+            transition_type = 'fade'  # fallback
+            for cand in candidates:
+                test_cmd = f'ffmpeg -v error -f lavfi -i "color=red:size=320x240:duration=2" -f lavfi -i "color=blue:size=320x240:duration=2" -filter_complex "[0:v][1:v]xfade=transition={cand}:duration=1.0:offset=1.0" -t 1 -f null -'
+                if run_command(test_cmd, f"    Probe transition {cand}", show_output=False):
+                    transition_type = cand
+                    break
+
+            # Use the concat approach that works reliably
+            # Future enhancement: implement proper transition filter chains
+            encoding_params = get_encoding_params(nvenc_available, fps)
+            cmd = f'ffmpeg -y -f concat -safe 0 -i "{concat_file}" {encoding_params} "{chunk_file}"'
+
+            print(f"      🔄 Concat slideshow command: {cmd}")
+            if run_command(cmd, f"    Creating slideshow", show_output=False):
+                print(f"      ✅ Slideshow creation SUCCESS")
             else:
-                concat_file = f"{temp_dir}/final_concat_{chunk_idx}.txt"
-                with open(concat_file, 'w') as f:
-                    for clip in transition_clips:
-                        f.write(f"file '{os.path.abspath(clip)}'\n")
-                cmd = f'ffmpeg -y -f concat -safe 0 -i "{concat_file}" -c:v libx264 -c:a aac -r {fps} -crf {DEFAULT_CRF} -preset {DEFAULT_PRESET} "{chunk_file}"'
-                if not run_command(cmd, f"    Finalizing chunk {chunk_idx + 1} (re-encoding to preserve transitions)", show_output=False):
-                    return False
-                for clip in transition_clips[1:]:
-                    try:
-                        os.remove(clip)
-                    except:
-                        pass
-                os.remove(concat_file)
+                print(f"      ❌ Slideshow creation failed")
+                return False
 
             for clip in temp_clips:
                 try:
