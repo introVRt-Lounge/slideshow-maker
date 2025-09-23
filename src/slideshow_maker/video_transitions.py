@@ -327,23 +327,24 @@ def create_slideshow_with_durations(
             except Exception:
                 pass
 
-        # Build split -> effects -> maskedmerge -> draws pipeline
-        base_label = 'ob'
-        eff_in_label = 'oe'
-        eff_out_label = 'oeo'
-        merged_label = 'om'
-        # Split the last_label into base/effect branches
-        # Ensure color space suitable; keep full color (rgba) for alpha overlays
-        filters.append(f'[{last_label}]format=rgba,split=2[{base_label}][{eff_in_label}]')
-        if effect_parts:
-            filters.append(f'[{eff_in_label}]{",".join(effect_parts)}[{eff_out_label}]')
-        else:
-            # No effects, just forward
-            eff_out_label = eff_in_label
-
-        # Choose mask (invert for background scope)
-        mask_to_use = mask_last_label if use_masks else None
+        # Build effects -> maskedmerge -> draws pipeline
+        # Only split into base/effect branches when masks are enabled
         if use_masks and mask_scope in ("foreground", "background"):
+            # Split the last_label into base/effect branches for masking
+            base_label = 'ob'
+            eff_in_label = 'oe'
+            eff_out_label = 'oeo'
+            merged_label = 'om'
+            # Ensure color space suitable; keep full color (rgba) for alpha overlays
+            filters.append(f'[{last_label}]format=rgba,split=2[{base_label}][{eff_in_label}]')
+            if effect_parts:
+                filters.append(f'[{eff_in_label}]{",".join(effect_parts)}[{eff_out_label}]')
+            else:
+                # No effects, just forward
+                eff_out_label = eff_in_label
+
+            # Choose mask (invert for background scope)
+            mask_to_use = mask_last_label
             if mask_scope == "background":
                 inv_label = 'm_over_inv'
                 filters.append(f'[{mask_last_label}]negate,format=gray[{inv_label}]')
@@ -354,7 +355,13 @@ def create_slideshow_with_durations(
             filters.append(f'[{base_label}][{eff_alpha}]overlay=shortest=1:format=auto[{merged_label}]')
             work_label = merged_label
         else:
-            work_label = eff_out_label
+            # No masking - apply effects directly
+            if effect_parts:
+                eff_out_label = 'oe'
+                filters.append(f'[{last_label}]{",".join(effect_parts)}[{eff_out_label}]')
+                work_label = eff_out_label
+            else:
+                work_label = last_label
 
         # Apply draw overlays on top of merged output
         final_label = work_label
@@ -767,23 +774,24 @@ def create_beat_aligned_with_transitions(
             except Exception:
                 pass
 
-        # Build split -> effects -> maskedmerge -> draws pipeline
-        base_label = 'ob'
-        eff_in_label = 'oe'
-        eff_out_label = 'oeo'
-        merged_label = 'om'
-        # Split the last_label into base/effect branches
-        # Ensure color space suitable; keep full color (rgba) for alpha overlays
-        filters.append(f'[{last_label}]format=rgba,split=2[{base_label}][{eff_in_label}]')
-        if effect_parts:
-            filters.append(f'[{eff_in_label}]{",".join(effect_parts)}[{eff_out_label}]')
-        else:
-            # No effects, just forward
-            eff_out_label = eff_in_label
-
-        # Choose mask (invert for background scope)
-        mask_to_use = mask_last_label if use_masks else None
+        # Build effects -> maskedmerge -> draws pipeline
+        # Only split into base/effect branches when masks are enabled
         if use_masks and mask_scope in ("foreground", "background"):
+            # Split the last_label into base/effect branches for masking
+            base_label = 'ob'
+            eff_in_label = 'oe'
+            eff_out_label = 'oeo'
+            merged_label = 'om'
+            # Ensure color space suitable; keep full color (rgba) for alpha overlays
+            filters.append(f'[{last_label}]format=rgba,split=2[{base_label}][{eff_in_label}]')
+            if effect_parts:
+                filters.append(f'[{eff_in_label}]{",".join(effect_parts)}[{eff_out_label}]')
+            else:
+                # No effects, just forward
+                eff_out_label = eff_in_label
+
+            # Choose mask (invert for background scope)
+            mask_to_use = mask_last_label
             if mask_scope == "background":
                 inv_label = 'm_over_inv'
                 filters.append(f'[{mask_last_label}]negate,format=gray[{inv_label}]')
@@ -794,7 +802,13 @@ def create_beat_aligned_with_transitions(
             filters.append(f'[{base_label}][{eff_alpha}]overlay=shortest=1:format=auto[{merged_label}]')
             work_label = merged_label
         else:
-            work_label = eff_out_label
+            # No masking - apply effects directly
+            if effect_parts:
+                eff_out_label = 'oe'
+                filters.append(f'[{last_label}]{",".join(effect_parts)}[{eff_out_label}]')
+                work_label = eff_out_label
+            else:
+                work_label = last_label
 
         # Apply draw overlays on top of merged output
         final_label = work_label
