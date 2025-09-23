@@ -261,16 +261,26 @@ def detect_nvenc_support():
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return False
     ffmpeg_path = get_ffmpeg_path()
-    
+
     try:
         # Check if h264_nvenc encoder is available (hard timeout)
         cmd = f'"{ffmpeg_path}" -hide_banner -encoders 2>&1'
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=1)
-        if result.returncode == 0 and 'h264_nvenc' in result.stdout:
+        if result.returncode != 0 or 'h264_nvenc' not in result.stdout:
+            return False
+
+        # Additional runtime test: Try to actually encode a tiny clip
+        # This catches cases where encoder is listed but CUDA libs are missing
+        test_cmd = f'"{ffmpeg_path}" -y -f lavfi -i "color=black:size=32x32:duration=0.1" -c:v h264_nvenc -f null - 2>&1'
+        test_result = subprocess.run(test_cmd, shell=True, capture_output=True, text=True, timeout=5)
+
+        # If the test succeeds (no CUDA errors), NVENC is truly available
+        if test_result.returncode == 0 and "Cannot load libcuda.so.1" not in test_result.stderr:
             return True
+
     except Exception:
         pass
-    
+
     return False
 
 
