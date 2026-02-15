@@ -57,3 +57,13 @@ wheels/
 ehthumbs.db
 Thumbs.db
 .cursor/mcp.json
+.cursor/
+
+# Local virtualenv
+venv/
+.venv/
+
+# OpenClaw session artifacts
+agent chats/
+recovered_agent_chats/
+
