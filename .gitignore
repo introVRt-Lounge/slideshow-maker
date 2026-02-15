@@ -19,6 +19,7 @@ test_xfade_opencl.py
 create_opencl_*.py
 OPENCL_SETUP_GUIDE.md
 test-slideshow-local/
+runtime-smoke-testing/
 
 # Python cache
 __pycache__/
