@@ -1,0 +1,473 @@
+#!/usr/bin/env python3
+"""
+Fixed-duration slideshow renderer, extracted from video.py
+"""
+from __future__ import annotations
+
+import os
+import shutil
+from typing import List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
+
+from .config import DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_FPS
+from .utils import run_command
+
+
+def create_slideshow_with_durations(
+    images: List[str],
+    durations: List[float],
+    output_file: str,
+    width: int = DEFAULT_WIDTH,
+    height: int = DEFAULT_HEIGHT,
+    fps: int = DEFAULT_FPS,
+    temp_dir: Optional[str] = None,
+    quantize: str = "nearest",
+    visualize_cuts: bool = False,
+    marker_duration: float = 0.12,
+    beat_markers: Optional[List[float]] = None,
+    pulse_beats: Optional[List[float]] = None,
+    pulse_duration: float = 0.08,
+    pulse_saturation: float = 1.25,
+    pulse_brightness: float = 0.00,
+    pulse_bloom: bool = False,
+    pulse_bloom_sigma: float = 8.0,
+    pulse_bloom_duration: float = 0.08,
+    counter_beats: Optional[List[float]] = None,
+    counter_fontsize: int = 36,
+    counter_position: str = "tr",
+    cut_markers: Optional[List[float]] = None,
+    mask_scope: str = "none",
+    workers: int = 1,
+) -> bool:
+    if len(images) == 0:
+        print("No images found!")
+        return False
+
+    if temp_dir is None:
+        temp_dir = ".slideshow_tmp"
+    os.makedirs(temp_dir, exist_ok=True)
+
+    # Persist and compare render parameters to support safe resume
+    params_path = os.path.join(temp_dir, "params.json")
+    current_params = {
+        "width": int(width),
+        "height": int(height),
+        "fps": int(fps),
+        "quantize": str(quantize),
+        "mask_scope": str(mask_scope),
+        "visualize_cuts": bool(visualize_cuts),
+        "marker_duration": float(marker_duration),
+        "pulse": bool(bool(pulse_beats)),
+        "pulse_duration": float(pulse_duration),
+        "pulse_saturation": float(pulse_saturation),
+        "pulse_brightness": float(pulse_brightness),
+        "pulse_bloom": bool(pulse_bloom),
+        "pulse_bloom_sigma": float(pulse_bloom_sigma),
+        "pulse_bloom_duration": float(pulse_bloom_duration),
+        "counter": bool(bool(counter_beats)),
+        "counter_fontsize": int(counter_fontsize),
+        "counter_position": str(counter_position),
+    }
+    previous_params = None
+    try:
+        if os.path.exists(params_path):
+            with open(params_path, "r") as pf:
+                previous_params = json.load(pf)
+    except Exception:
+        previous_params = None
+    if previous_params is not None and previous_params != current_params:
+        # Parameters changed - purge stale clips to avoid mismatched overlays
+        try:
+            for name in os.listdir(temp_dir):
+                if name.startswith("clip_") and name.endswith(".mp4"):
+                    try:
+                        os.remove(os.path.join(temp_dir, name))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    # Write current params (idempotent)
+    try:
+        with open(params_path, "w") as pf:
+            json.dump(current_params, pf)
+    except Exception:
+        pass
+
+    count = min(len(images), len(durations))
+    images = images[:count]
+    durations = durations[:count]
+
+    temp_clips: List[str] = []
+    print(f"🎬 Creating fixed-duration clips for {count} images...")
+
+    # Optional foreground/background masks via rembg
+    # Build per-image mask paths if available (precomputed upfront)
+    masks: List[Optional[str]] = [None] * len(images)
+    use_masks = mask_scope in ("foreground", "background")
+    if use_masks:
+        for idx, img in enumerate(images):
+            filename = os.path.basename(img)
+            name_no_ext, _ = os.path.splitext(filename)
+            mask_path = os.path.join(os.path.dirname(img), "masks", f"{name_no_ext}_mask.png")
+            if os.path.exists(mask_path):
+                masks[idx] = mask_path
+            # NOTE: Masks should be precomputed upfront, no inline generation here
+
+    # Precompute elapsed per clip to support parallel command construction
+    elapsed_prefix: List[float] = []
+    acc = 0.0
+    for d in durations:
+        elapsed_prefix.append(acc)
+        acc += float(d)
+
+    def _build_cmd(i: int, img: str, dur_in: float, elapsed_in: float) -> tuple[str, str, float, int]:
+        """Return (cmd, clip_path, dur, frames) for clip i."""
+        dur = dur_in
+        # Quantize duration to exact frame count to keep cuts on frame boundaries
+        if quantize == "floor":
+            frames = max(1, int(float(dur) * fps))
+        elif quantize == "ceil":
+            frames = max(1, int((float(dur) * fps) + 0.999999))
+        else:
+            frames = max(1, int(round(float(dur) * fps)))
+        dur = max(1.0 / fps, frames / float(fps))
+
+        clip_path = f"{temp_dir}/clip_{i:04d}.mp4"
+        vf_parts = [
+            f"scale={width}:{height}:force_original_aspect_ratio=decrease",
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
+        ]
+
+        if visualize_cuts and i > 0 and marker_duration > 0:
+            vf_parts.append(
+                f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=white@1.0:t=fill:enable='between(t,0,{marker_duration:.3f})'"
+            )
+
+        if beat_markers:
+            try:
+                for bt in beat_markers:
+                    if bt < elapsed_in:
+                        continue
+                    if bt >= elapsed_in + dur:
+                        break
+                    rel_t = max(0.0, bt - elapsed_in)
+                    vf_parts.append(
+                        f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=white@1.0:t=fill:enable='between(t,{rel_t:.3f},{(rel_t+marker_duration):.3f})'"
+                    )
+            except Exception:
+                pass
+
+        if cut_markers:
+            try:
+                for ct in cut_markers:
+                    if ct <= elapsed_in:
+                        continue
+                    if ct > elapsed_in + dur:
+                        break
+                    rel_t = max(0.0, ct - elapsed_in)
+                    rel_t = min(max(0.0, rel_t - 0.02), max(0.0, dur - 0.02))
+                    vf_parts.append(
+                        f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=red@1.0:t=fill:enable='between(t,{rel_t:.3f},{(rel_t+marker_duration):.3f})'"
+                    )
+            except Exception:
+                pass
+
+        # NOTE: Do not apply pulse on the base chain when using masks; masked branch will handle it
+        if (pulse_beats and pulse_duration > 0 and (pulse_saturation > 1.0 or pulse_brightness != 0.0)) and not (use_masks and masks[i]):
+            try:
+                for bt in pulse_beats:
+                    if bt < elapsed_in:
+                        continue
+                    if bt >= elapsed_in + dur:
+                        break
+                    rel_t = max(0.0, bt - elapsed_in)
+                    vf_parts.append(
+                        f"eq=saturation={float(pulse_saturation):.3f}:brightness={float(pulse_brightness):.3f}:enable='between(t,{rel_t:.3f},{(rel_t+pulse_duration):.3f})'"
+                    )
+            except Exception:
+                pass
+
+        if (pulse_bloom and pulse_bloom_duration > 0 and pulse_bloom_sigma > 0) and not (use_masks and masks[i]):
+            try:
+                beats_for_bloom = pulse_beats or beat_markers or []
+                for bt in beats_for_bloom:
+                    if bt < elapsed_in:
+                        continue
+                    if bt >= elapsed_in + dur:
+                        break
+                    rel_t = max(0.0, bt - elapsed_in)
+                    vf_parts.append(
+                        f"gblur=sigma={float(pulse_bloom_sigma):.2f}:steps=1:enable='between(t,{rel_t:.3f},{(rel_t+pulse_bloom_duration):.3f})'"
+                    )
+            except Exception:
+                pass
+
+        if counter_beats and counter_fontsize > 0:
+            try:
+                beats_in_order = list(counter_beats)
+                count_before = 0
+                first_idx_in_clip = None
+                for idx_b, b in enumerate(beats_in_order):
+                    if b < elapsed_in:
+                        count_before += 1
+                    else:
+                        first_idx_in_clip = idx_b
+                        break
+                if counter_position == "tr":
+                    x_expr = "w-tw-20"; y_expr = "20"
+                elif counter_position == "tl":
+                    x_expr = "20"; y_expr = "20"
+                elif counter_position == "br":
+                    x_expr = "w-tw-20"; y_expr = "h-th-20"
+                else:
+                    x_expr = "20"; y_expr = "h-th-20"
+                first_rel = None
+                if first_idx_in_clip is not None and first_idx_in_clip < len(beats_in_order):
+                    first_rel = max(0.0, beats_in_order[first_idx_in_clip] - elapsed_in)
+                if count_before > 0 and first_rel is not None and first_rel > 0:
+                    prev_idx = count_before
+                    vf_parts.append(
+                        "drawtext=fontfile='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'"
+                        f":text='{prev_idx}':x={x_expr}:y={y_expr}:fontsize={int(counter_fontsize)}:fontcolor=white:"
+                        f"bordercolor=black:borderw=2:enable='between(t,0,{first_rel:.3f})'"
+                    )
+                local_beats: List[float] = []
+                for bt in beats_in_order:
+                    if bt < elapsed_in:
+                        continue
+                    if bt >= elapsed_in + dur:
+                        break
+                    local_beats.append(bt)
+                for j, bt in enumerate(local_beats):
+                    rel_t = max(0.0, bt - elapsed_in)
+                    rel_next = dur if j + 1 >= len(local_beats) else max(0.0, local_beats[j + 1] - elapsed_in)
+                    idx = count_before + j + 1
+                    vf_parts.append(
+                        "drawtext=fontfile='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'"
+                        f":text='{idx}':x={x_expr}:y={y_expr}:fontsize={int(counter_fontsize)}:fontcolor=white:"
+                        f"bordercolor=black:borderw=2:enable='between(t,{rel_t:.3f},{rel_next:.3f})'"
+                    )
+            except Exception:
+                pass
+
+        if use_masks and masks[i]:
+            pre = ",".join([
+                f"scale={width}:{height}:force_original_aspect_ratio=decrease",
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
+                "format=rgba",
+            ])
+            # Build effect-only chain on a split branch
+            effect_chain_parts: List[str] = []
+            if pulse_beats and pulse_duration > 0 and (pulse_saturation > 1.0 or pulse_brightness != 0.0):
+                try:
+                    for bt in pulse_beats:
+                        if bt < elapsed_in:
+                            continue
+                        if bt >= elapsed_in + dur:
+                            break
+                        rel_t = max(0.0, bt - elapsed_in)
+                        effect_chain_parts.append(
+                            f"eq=saturation={float(pulse_saturation):.3f}:brightness={float(pulse_brightness):.3f}:enable='between(t,{rel_t:.3f},{(rel_t+pulse_duration):.3f})'"
+                        )
+                except Exception:
+                    pass
+            if pulse_bloom and pulse_bloom_duration > 0 and pulse_bloom_sigma > 0:
+                try:
+                    beats_for_bloom = pulse_beats or beat_markers or []
+                    for bt in beats_for_bloom:
+                        if bt < elapsed_in:
+                            continue
+                        if bt >= elapsed_in + dur:
+                            break
+                        rel_t = max(0.0, bt - elapsed_in)
+                        effect_chain_parts.append(
+                            f"gblur=sigma={float(pulse_bloom_sigma):.2f}:steps=1:enable='between(t,{rel_t:.3f},{(rel_t+pulse_bloom_duration):.3f})'"
+                        )
+                except Exception:
+                    pass
+            post_chain_parts: List[str] = []
+            if visualize_cuts and i > 0 and marker_duration > 0:
+                post_chain_parts.append(
+                    f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=white@1.0:t=fill:enable='between(t,0,{marker_duration:.3f})'"
+                )
+            if beat_markers:
+                try:
+                    for bt in beat_markers:
+                        if bt < elapsed_in:
+                            continue
+                        if bt >= elapsed_in + dur:
+                            break
+                        rel_t = max(0.0, bt - elapsed_in)
+                        post_chain_parts.append(
+                            f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=white@1.0:t=fill:enable='between(t,{rel_t:.3f},{(rel_t+marker_duration):.3f})'"
+                        )
+                except Exception:
+                    pass
+            if cut_markers:
+                try:
+                    for ct in cut_markers:
+                        if ct <= elapsed_in:
+                            continue
+                        if ct > elapsed_in + dur:
+                            break
+                        rel_t = max(0.0, ct - elapsed_in)
+                        rel_t = min(max(0.0, rel_t - 0.02), max(0.0, dur - 0.02))
+                        post_chain_parts.append(
+                            f"drawbox=x=(iw/2-5):y=0:w=10:h=ih:color=red@1.0:t=fill:enable='between(t,{rel_t:.3f},{(rel_t+marker_duration):.3f})'"
+                        )
+                except Exception:
+                    pass
+            if counter_beats and counter_fontsize > 0:
+                try:
+                    beats_in_order = list(counter_beats)
+                    count_before = 0
+                    first_idx_in_clip = None
+                    for idx_b, b in enumerate(beats_in_order):
+                        if b < elapsed_in:
+                            count_before += 1
+                        else:
+                            first_idx_in_clip = idx_b
+                            break
+                    if counter_position == "tr":
+                        x_expr = "w-tw-20"; y_expr = "20"
+                    elif counter_position == "tl":
+                        x_expr = "20"; y_expr = "20"
+                    elif counter_position == "br":
+                        x_expr = "w-tw-20"; y_expr = "h-th-20"
+                    else:
+                        x_expr = "20"; y_expr = "h-th-20"
+                    first_rel = None
+                    if first_idx_in_clip is not None and first_idx_in_clip < len(beats_in_order):
+                        first_rel = max(0.0, beats_in_order[first_idx_in_clip] - elapsed_in)
+                    if count_before > 0 and first_rel is not None and first_rel > 0:
+                        prev_idx = count_before
+                        post_chain_parts.append(
+                            "drawtext=fontfile='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'"
+                            f":text='{prev_idx}':x={x_expr}:y={y_expr}:fontsize={int(counter_fontsize)}:fontcolor=white:"
+                            f"bordercolor=black:borderw=2:enable='between(t,0,{first_rel:.3f})'"
+                        )
+                    local_beats: List[float] = []
+                    for bt in beats_in_order:
+                        if bt < elapsed_in:
+                            continue
+                        if bt >= elapsed_in + dur:
+                            break
+                        local_beats.append(bt)
+                    for j2, bt in enumerate(local_beats):
+                        rel_t = max(0.0, bt - elapsed_in)
+                        rel_next = dur if j2 + 1 >= len(local_beats) else max(0.0, local_beats[j2 + 1] - elapsed_in)
+                        idx_label = count_before + j2 + 1
+                        post_chain_parts.append(
+                            "drawtext=fontfile='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'"
+                            f":text='{idx_label}':x={x_expr}:y={y_expr}:fontsize={int(counter_fontsize)}:fontcolor=white:"
+                            f"bordercolor=black:borderw=2:enable='between(t,{rel_t:.3f},{rel_next:.3f})'"
+                        )
+                except Exception:
+                    pass
+
+            eff = ",".join(effect_chain_parts) if effect_chain_parts else None
+            post = ",".join(post_chain_parts) if post_chain_parts else None
+
+            # Prepare mask branch; invert for background
+            # Build mask chain, label at end to avoid invalid relabeling
+            mask_process = (
+                f"[1:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,format=gray"
+            )
+            if mask_scope == "background":
+                mask_process += ",negate"
+            mask_process += "[m]"
+
+            # Use alphamerge + overlay to apply effect only where mask alpha is present
+            fc_parts = [
+                f"[0:v]{pre},split=2[b][e]",
+                (f"[e]{eff}[ee]" if eff else "[e]copy[ee]"),
+                mask_process,
+                "[b]format=rgba[br]",
+                "[ee]format=rgba[er]",
+                "[er][m]alphamerge[ea]",
+                "[br][ea]overlay=shortest=1[mm]",
+            ]
+            map_label = "[mm]"
+            if post:
+                fc_parts.append(f"[mm]{post}[vout]")
+                map_label = "[vout]"
+            filter_complex = ";".join(fc_parts)
+
+            cmd = (
+                f'ffmpeg -y -loop 1 -i "{img}" -loop 1 -i "{masks[i]}" -t {float(dur):.3f} '
+                f'-filter_complex "{filter_complex}" -map {map_label} -frames:v {frames} '
+                f'-c:v libx264 -r {fps} -preset ultrafast -pix_fmt yuv420p "{clip_path}"'
+            )
+        else:
+            vf_filter = ",".join(vf_parts)
+            cmd = (
+                f'ffmpeg -y -loop 1 -i "{img}" -t {float(dur):.3f} '
+                f'-vf "{vf_filter}" -frames:v {frames} -c:v libx264 -r {fps} -preset ultrafast -pix_fmt yuv420p "{clip_path}"'
+            )
+        return cmd, clip_path, float(dur), frames
+
+    # Parallel or serial execution
+    if workers and workers > 1:
+        tasks: List[tuple[int, str, str, float, int]] = []
+        for idx, (img, dur) in enumerate(zip(images, durations)):
+            cmd, clip_path, dur_q, frames = _build_cmd(idx, img, float(dur), elapsed_prefix[idx])
+            tasks.append((idx, cmd, clip_path, dur_q, frames))
+        # Submit tasks
+        with ThreadPoolExecutor(max_workers=int(workers)) as executor:
+            future_map = {}
+            for idx, cmd, clip_path, dur_q, _ in tasks:
+                # Resume skip
+                try:
+                    if os.path.exists(clip_path) and os.path.getsize(clip_path) > 0:
+                        print(f"  ⏭️  Clip {idx+1}/{count} exists - skipping")
+                        temp_clips.append(clip_path)
+                        continue
+                except Exception:
+                    pass
+                future = executor.submit(run_command, cmd, f"Clip {idx+1}/{count} ({dur_q:.2f}s)", False, 120)
+                future_map[future] = clip_path
+            # Collect
+            for future in as_completed(future_map):
+                ok = future.result()
+                if not ok:
+                    return False
+                temp_clips.append(future_map[future])
+        # Ensure ordering by index
+        temp_clips = [t[2] for t in sorted(tasks, key=lambda x: x[0])]
+    else:
+        elapsed = 0.0
+        for i, (img, dur) in enumerate(zip(images, durations)):
+            cmd, clip_path, dur_q, _frames = _build_cmd(i, img, float(dur), elapsed)
+            # Resume: skip re-encoding if clip already exists with non-zero size
+            try:
+                if os.path.exists(clip_path) and os.path.getsize(clip_path) > 0:
+                    print(f"  ⏭️  Clip {i+1}/{count} exists - skipping")
+                    temp_clips.append(clip_path)
+                    elapsed += float(dur_q)
+                    continue
+            except Exception:
+                pass
+            if not run_command(cmd, f"Clip {i+1}/{count} ({dur_q:.2f}s)", timeout_seconds=120):
+                return False
+            temp_clips.append(clip_path)
+            elapsed += float(dur_q)
+
+    if len(temp_clips) == 1:
+        os.rename(temp_clips[0], output_file)
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return True
+
+    concat_list = f"{temp_dir}/concat.txt"
+    with open(concat_list, "w") as f:
+        for clip in temp_clips:
+            f.write(f"file '{os.path.abspath(clip)}'\n")
+
+    cmd = f'ffmpeg -y -f concat -safe 0 -i "{concat_list}" -c copy "{output_file}"'
+    ok = run_command(cmd, "Concatenating fixed-duration clips", timeout_seconds=300)
+
+    shutil.rmtree(temp_dir, ignore_errors=True)
+    return ok
+
+
